@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
 /// Operation Code
 #[repr(u8)]
@@ -158,4 +158,66 @@ impl Default for Chunk {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub struct Vm {
+    // chunk: Option<Chunk>,
+    cursor: *const u8,
+    tracing: bool,
+}
+
+impl Vm {
+    pub fn new() -> Self {
+        Self {
+            // chunk: None,
+            cursor: std::ptr::null(),
+            tracing: false,
+        }
+    }
+
+    pub fn enable_tracing(&mut self) {
+        self.tracing = true;
+    }
+
+    pub fn interpret(&mut self, chunk: Chunk) -> Result<(), VmError> {
+        unsafe {
+            self.cursor = &chunk.code[0];
+            loop {
+                if self.tracing {
+                    let start = chunk.code.as_ptr();
+                    chunk.disassemble_instruction(
+                        // Pointer math to calculate offset from the start of the vec to cursor to reuse
+                        // existing `Chunk::disassemble_instruction()` method.
+                        &mut ((self.cursor.offset_from(start) / 8) as usize),
+                    );
+                }
+                match OpCode::try_from(*self.cursor).map_err(|_| VmError::RuntimeError)? {
+                    OpCode::Return => return Ok(()),
+                    OpCode::Constant => {
+                        self.move_cursor();
+                    }
+                }
+            }
+        }
+    }
+
+    unsafe fn move_cursor(&mut self) {
+        unsafe {
+            self.cursor = self.cursor.add(8);
+        }
+    }
+}
+
+impl Default for Vm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum VmError {
+    #[error("compile error")]
+    CompileError,
+    #[error("runtime error")]
+    RuntimeError,
 }
