@@ -37,7 +37,7 @@ impl Display for OpCode {
 
 impl OpCode {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct Value(f64);
 
 impl Value {
@@ -164,14 +164,18 @@ pub struct Vm {
     // chunk: Option<Chunk>,
     cursor: *const u8,
     tracing: bool,
+    stack: Vec<Value>,
 }
 
 impl Vm {
+    const STACK_MAX: usize = 256;
+
     pub fn new() -> Self {
         Self {
             // chunk: None,
             cursor: std::ptr::null(),
             tracing: false,
+            stack: Vec::with_capacity(Self::STACK_MAX),
         }
     }
 
@@ -180,10 +184,18 @@ impl Vm {
     }
 
     pub fn interpret(&mut self, chunk: Chunk) -> Result<(), VmError> {
+        // SAFETY:
+        // - Each chunk ends with the OpCode::Return.
+        // - chunk.code[] is never empty.
         unsafe {
-            self.cursor = &chunk.code[0];
+            self.cursor = &chunk.code[0] as *const u8;
             loop {
                 if self.tracing {
+                    print!("          [");
+                    for val in self.stack.iter().rev() {
+                        print!(" {} ", val);
+                    }
+                    println!("]");
                     let start = chunk.code.as_ptr();
                     chunk.disassemble_instruction(
                         // Pointer math to calculate offset from the start of the vec to cursor to reuse
@@ -192,16 +204,24 @@ impl Vm {
                     );
                 }
                 match OpCode::try_from(*self.cursor).map_err(|_| VmError::RuntimeError)? {
-                    OpCode::Return => return Ok(()),
+                    OpCode::Return => {
+                        match self.stack.pop() {
+                            Some(v) => println!("return {v}"),
+                            None => println!("return nil"),
+                        }
+                        return Ok(());
+                    }
                     OpCode::Constant => {
                         self.move_cursor();
+                        self.stack
+                            .push(chunk.constants[*self.cursor as usize].clone())
                     }
                 }
             }
         }
     }
 
-    unsafe fn move_cursor(&mut self) {
+    fn move_cursor(&mut self) {
         unsafe {
             self.cursor = self.cursor.add(8);
         }
