@@ -10,6 +10,10 @@ pub mod value;
 pub enum OpCode {
     Constant,
     Negate,
+    Add,
+    Sub,
+    Mult,
+    Div,
     Return,
 }
 
@@ -20,6 +24,10 @@ impl TryFrom<u8> for OpCode {
         match value {
             x if x == OpCode::Return as u8 => Ok(OpCode::Return),
             x if x == OpCode::Constant as u8 => Ok(OpCode::Constant),
+            x if x == OpCode::Add as u8 => Ok(OpCode::Add),
+            x if x == OpCode::Sub as u8 => Ok(OpCode::Sub),
+            x if x == OpCode::Mult as u8 => Ok(OpCode::Mult),
+            x if x == OpCode::Div as u8 => Ok(OpCode::Div),
             x if x == OpCode::Negate as u8 => Ok(OpCode::Negate),
             _ => Err(()),
         }
@@ -37,6 +45,10 @@ impl Display for OpCode {
         match self {
             Self::Constant => write!(f, "OP_CONSTANT"),
             Self::Negate => write!(f, "OP_NEGATE"),
+            Self::Add => write!(f, "OP_ADD"),
+            Self::Sub => write!(f, "OP_SUBTRACT"),
+            Self::Mult => write!(f, "OP_MULTIPLY"),
+            Self::Div => write!(f, "OP_DIVIDE"),
             Self::Return => write!(f, "OP_RETURN"),
         }
     }
@@ -77,7 +89,7 @@ impl Chunk {
             self.lines
                 .resize_with((self.lines.len() as f64 * 1.5) as usize, Default::default);
         }
-        // Lines will always start from 1, but we substract 1 from it to utilize a value at `[0]`.
+        // Lines will always start from 1, but we subtract 1 from it to utilize a value at `[0]`.
         self.lines[line - 1] += 1;
     }
 
@@ -206,6 +218,56 @@ impl Vm {
                             None => return Err(VmError::RuntimeError),
                         };
                         self.stack.push(val);
+                        self.move_cursor();
+                    }
+                    OpCode::Add => {
+                        // NOTE: we pop values in a backwards order, so we assign the first pop to
+                        // v2 instead of v1. Same for all other binary operators.
+                        let v2 = match self.stack.pop() {
+                            Some(v) => v,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        let v1 = match self.stack.pop() {
+                            Some(v) => v,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        self.stack.push(v1 + v2);
+                        self.move_cursor();
+                    }
+                    OpCode::Sub => {
+                        let v2 = match self.stack.pop() {
+                            Some(v) => v,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        let v1 = match self.stack.pop() {
+                            Some(v) => v,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        self.stack.push(v1 - v2);
+                        self.move_cursor();
+                    }
+                    OpCode::Mult => {
+                        let v2 = match self.stack.pop() {
+                            Some(v) => v,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        let v1 = match self.stack.pop() {
+                            Some(v) => v,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        self.stack.push(v1 * v2);
+                        self.move_cursor();
+                    }
+                    OpCode::Div => {
+                        let v2 = match self.stack.pop() {
+                            Some(v) => v,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        let v1 = match self.stack.pop() {
+                            Some(v) => v,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        self.stack.push(v1 / v2);
                         self.move_cursor();
                     }
                     OpCode::Return => {
