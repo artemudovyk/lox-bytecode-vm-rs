@@ -202,7 +202,7 @@ impl Vm {
                     }
                     OpCode::Negate => {
                         let val = match self.stack.pop() {
-                            Some(v) => v * -1,
+                            Some(v) => -v,
                             None => return Err(VmError::RuntimeError),
                         };
                         self.stack.push(val);

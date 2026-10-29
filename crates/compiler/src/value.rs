@@ -1,4 +1,7 @@
-use std::{fmt::Display, ops::Mul};
+use std::{
+    fmt::Display,
+    ops::{Mul, Neg},
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct Value(pub(crate) f64);
@@ -19,5 +22,12 @@ impl Mul<i32> for Value {
     type Output = Self;
     fn mul(self, rhs: i32) -> Self::Output {
         Self(self.0 * rhs as f64)
+    }
+}
+
+impl Neg for Value {
+    type Output = Self;
+    fn neg(self) -> Self::Output {
+        Self(-self.0)
     }
 }
