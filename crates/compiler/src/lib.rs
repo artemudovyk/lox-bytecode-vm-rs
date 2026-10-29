@@ -1,11 +1,16 @@
 use std::fmt::Display;
 
+use crate::value::Value;
+
+pub mod value;
+
 /// Operation Code
 #[repr(u8)]
 #[derive(Debug)]
 pub enum OpCode {
-    Return,
     Constant,
+    Negate,
+    Return,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -15,6 +20,7 @@ impl TryFrom<u8> for OpCode {
         match value {
             x if x == OpCode::Return as u8 => Ok(OpCode::Return),
             x if x == OpCode::Constant as u8 => Ok(OpCode::Constant),
+            x if x == OpCode::Negate as u8 => Ok(OpCode::Negate),
             _ => Err(()),
         }
     }
@@ -29,26 +35,10 @@ impl From<OpCode> for u8 {
 impl Display for OpCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Return => write!(f, "OP_RETURN"),
             Self::Constant => write!(f, "OP_CONSTANT"),
+            Self::Negate => write!(f, "OP_NEGATE"),
+            Self::Return => write!(f, "OP_RETURN"),
         }
-    }
-}
-
-impl OpCode {}
-
-#[derive(Debug, Clone, Default)]
-pub struct Value(f64);
-
-impl Value {
-    pub fn new(val: f64) -> Self {
-        Self(val)
-    }
-}
-
-impl Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
     }
 }
 
@@ -192,7 +182,7 @@ impl Vm {
             loop {
                 if self.tracing {
                     print!("          [");
-                    for val in self.stack.iter().rev() {
+                    for val in &self.stack {
                         print!(" {} ", val);
                     }
                     println!("]");
@@ -200,21 +190,30 @@ impl Vm {
                     chunk.disassemble_instruction(
                         // Pointer math to calculate offset from the start of the vec to cursor to reuse
                         // existing `Chunk::disassemble_instruction()` method.
-                        &mut ((self.cursor.offset_from(start) / 8) as usize),
+                        &mut ((self.cursor.offset_from(start)) as usize),
                     );
                 }
                 match OpCode::try_from(*self.cursor).map_err(|_| VmError::RuntimeError)? {
+                    OpCode::Constant => {
+                        self.move_cursor();
+                        self.stack
+                            .push(chunk.constants[*self.cursor as usize].clone());
+                        self.move_cursor();
+                    }
+                    OpCode::Negate => {
+                        let val = match self.stack.pop() {
+                            Some(v) => v * -1,
+                            None => return Err(VmError::RuntimeError),
+                        };
+                        self.stack.push(val);
+                        self.move_cursor();
+                    }
                     OpCode::Return => {
                         match self.stack.pop() {
                             Some(v) => println!("return {v}"),
                             None => println!("return nil"),
                         }
                         return Ok(());
-                    }
-                    OpCode::Constant => {
-                        self.move_cursor();
-                        self.stack
-                            .push(chunk.constants[*self.cursor as usize].clone())
                     }
                 }
             }
@@ -223,7 +222,13 @@ impl Vm {
 
     fn move_cursor(&mut self) {
         unsafe {
-            self.cursor = self.cursor.add(8);
+            self.cursor = self.cursor.add(1);
+        }
+    }
+
+    fn move_cursor_n(&mut self, n: usize) {
+        unsafe {
+            self.cursor = self.cursor.add(n);
         }
     }
 }
