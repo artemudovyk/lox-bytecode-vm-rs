@@ -1,0 +1,938 @@
+use std::{iter::Peekable, str::Chars};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenKind<'src> {
+    /// `(`
+    LeftParen,
+    /// `)`
+    RightParen,
+    /// `{`
+    LeftBrace,
+    /// `}`
+    RightBrace,
+    /// `,`
+    Comma,
+    /// `.`
+    Dot,
+    /// `-`
+    Minus,
+    /// `+`
+    Plus,
+    /// `;`
+    Semicolon,
+    /// `*`
+    Star,
+    /// `=`
+    Eq,
+    /// `==`
+    EqEq,
+    /// `!`
+    Bang,
+    /// `!=`
+    BangEq,
+    /// `<`
+    Less,
+    /// `<=`
+    LessEqual,
+    /// `>`
+    Greater,
+    /// `>=`
+    GreaterEqual,
+    /// `/`
+    Slash,
+    /// `// comment`
+    Comment,
+    /// e.g. `foo`, `bar`, `_baz`
+    Ident,
+    /// Any whitespace char
+    Whitespace,
+    Literal(Literal<'src>),
+    Keyword(Keyword),
+    Unknown {
+        ch: char,
+        line: usize,
+    },
+    Eof,
+}
+
+impl std::fmt::Display for TokenKind<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LeftParen => write!(f, "("),
+            Self::RightParen => write!(f, ")"),
+            Self::LeftBrace => write!(f, "{{"),
+            Self::RightBrace => write!(f, "}}"),
+            Self::Comma => write!(f, ","),
+            Self::Dot => write!(f, "."),
+            Self::Minus => write!(f, "-"),
+            Self::Plus => write!(f, "+"),
+            Self::Semicolon => write!(f, ";"),
+            Self::Star => write!(f, "*"),
+            Self::Eq => write!(f, "="),
+            Self::EqEq => write!(f, "=="),
+            Self::Bang => write!(f, "!"),
+            Self::BangEq => write!(f, "!="),
+            Self::Less => write!(f, "<"),
+            Self::LessEqual => write!(f, "<="),
+            Self::Greater => write!(f, ">"),
+            Self::GreaterEqual => write!(f, ">="),
+            Self::Slash => write!(f, "/"),
+            Self::Comment => write!(f, "//"),
+            Self::Ident => write!(f, "identifier"),
+            Self::Whitespace => write!(f, "whitespace"),
+            // TODO: change to display impl
+            Self::Literal(literal) => write!(f, "{:?}", literal),
+            Self::Keyword(keyword) => write!(f, "{:?}", keyword),
+            Self::Unknown { .. } => write!(f, "unkown"),
+            Self::Eof => write!(f, "<EOF>"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal<'src> {
+    String { s: &'src str, terminated: bool },
+    Number(f64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Keyword {
+    Var,
+    Fun,
+    Return,
+    Class,
+    This,
+    Super,
+    Nil,
+    If,
+    Else,
+    And,
+    Or,
+    True,
+    False,
+    For,
+    While,
+    Print,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Token<'src> {
+    pub kind: TokenKind<'src>,
+    pub lexeme: &'src str,
+    pub len: usize,
+    pub line: usize,
+    pub col: usize,
+}
+
+impl<'src> Token<'src> {
+    fn new(kind: TokenKind<'src>, lexeme: &'src str, len: usize, line: usize, col: usize) -> Self {
+        Self {
+            kind,
+            lexeme,
+            len,
+            line,
+            col,
+        }
+    }
+
+    fn eof(line: usize, col: usize) -> Self {
+        Self {
+            kind: TokenKind::Eof,
+            lexeme: "",
+            len: 0,
+            line,
+            col,
+        }
+    }
+
+    pub fn unterminated(&self) -> bool {
+        match &self.kind {
+            TokenKind::Literal(Literal::String { terminated, .. }) => !*terminated,
+            _ => false,
+        }
+    }
+
+    pub fn is_eof(&self) -> bool {
+        matches!(self.kind, TokenKind::Eof)
+    }
+}
+
+struct Cursor<'a> {
+    /// Iterator over src chars
+    chars: Peekable<Chars<'a>>,
+    /// Current line, starts from 1
+    line: usize,
+    /// Current column, starts from 1
+    col: usize,
+    byte_pos: usize,
+}
+
+const EOF_CHAR: char = '\0';
+
+impl<'a> Cursor<'a> {
+    fn new(chars: Chars<'a>) -> Self {
+        Self {
+            chars: chars.peekable(),
+            line: 1,
+            col: 1,
+            byte_pos: 0,
+        }
+    }
+
+    /// Returns next char and moves the cursor
+    fn bump(&mut self) -> Option<char> {
+        let ch = self.chars.next()?;
+        if ch == '\n' {
+            self.line += 1;
+            self.col = 0;
+        }
+        self.byte_pos += ch.len_utf8();
+        self.col += 1;
+        Some(ch)
+    }
+
+    fn peek(&mut self) -> char {
+        self.chars.peek().copied().unwrap_or(EOF_CHAR)
+    }
+
+    fn eat_while(&mut self, mut predicate: impl FnMut(char) -> bool) {
+        while predicate(self.peek()) {
+            self.bump();
+        }
+    }
+}
+
+pub struct Lexer<'src> {
+    src: &'src str,
+    cursor: Cursor<'src>,
+    peeked: Option<Token<'src>>,
+}
+
+impl<'src> Lexer<'src> {
+    pub fn new(src: &'src str) -> Self {
+        Self {
+            src,
+            cursor: Cursor::new(src.chars()),
+            peeked: None,
+        }
+    }
+
+    pub fn next_token(&mut self) -> Token<'src> {
+        // Return a buffered token if present, otherwise continue with the regular execution
+        if let Some(token) = self.peeked.take() {
+            return token;
+        }
+
+        // Skip all whitespace chars
+        while self.cursor.peek().is_whitespace() {
+            self.cursor.bump();
+        }
+
+        let col = self.cursor.col;
+        let start = self.cursor.byte_pos;
+        let Some(ch) = self.cursor.bump() else {
+            return Token::eof(self.cursor.line, self.cursor.col);
+        };
+
+        let token_kind = match ch {
+            '(' => TokenKind::LeftParen,
+            ')' => TokenKind::RightParen,
+            '{' => TokenKind::LeftBrace,
+            '}' => TokenKind::RightBrace,
+            '*' => TokenKind::Star,
+            ',' => TokenKind::Comma,
+            '.' => TokenKind::Dot,
+            '+' => TokenKind::Plus,
+            '-' => TokenKind::Minus,
+            ';' => TokenKind::Semicolon,
+            '=' => match self.cursor.peek() {
+                '=' => {
+                    self.cursor.bump();
+                    TokenKind::EqEq
+                }
+                _ => TokenKind::Eq,
+            },
+            '!' => match self.cursor.peek() {
+                '=' => {
+                    self.cursor.bump();
+                    TokenKind::BangEq
+                }
+                _ => TokenKind::Bang,
+            },
+            '<' => match self.cursor.peek() {
+                '=' => {
+                    self.cursor.bump();
+                    TokenKind::LessEqual
+                }
+                _ => TokenKind::Less,
+            },
+            '>' => match self.cursor.peek() {
+                '=' => {
+                    self.cursor.bump();
+                    TokenKind::GreaterEqual
+                }
+                _ => TokenKind::Greater,
+            },
+            '/' => match self.cursor.peek() {
+                '/' => {
+                    self.cursor.eat_while(|v| v != '\n' && v != EOF_CHAR);
+                    TokenKind::Comment
+                }
+                _ => TokenKind::Slash,
+            },
+            '"' => {
+                self.cursor.eat_while(|v| v != '"' && v != EOF_CHAR);
+                if self.cursor.peek() == EOF_CHAR {
+                    TokenKind::Literal(Literal::String {
+                        s: "",
+                        terminated: false,
+                    })
+                } else {
+                    self.cursor.bump();
+                    TokenKind::Literal(Literal::String {
+                        s: self.src[start..self.cursor.byte_pos].trim_matches(|v| v == '"'),
+                        terminated: true,
+                    })
+                }
+            }
+            '0'..='9' => {
+                self.cursor.eat_while(|v| v.is_ascii_digit() || v == '.');
+                let v: f64 = self.src[start..self.cursor.byte_pos].parse().unwrap();
+                TokenKind::Literal(Literal::Number(v))
+            }
+            'a'..='z' | 'A'..='Z' | '_' => {
+                self.cursor.eat_while(|v| v.is_alphanumeric() || v == '_');
+                let v = &self.src[start..self.cursor.byte_pos];
+                match v {
+                    "var" => TokenKind::Keyword(Keyword::Var),
+                    "fun" => TokenKind::Keyword(Keyword::Fun),
+                    "return" => TokenKind::Keyword(Keyword::Return),
+                    "class" => TokenKind::Keyword(Keyword::Class),
+                    "this" => TokenKind::Keyword(Keyword::This),
+                    "super" => TokenKind::Keyword(Keyword::Super),
+                    "nil" => TokenKind::Keyword(Keyword::Nil),
+                    "if" => TokenKind::Keyword(Keyword::If),
+                    "else" => TokenKind::Keyword(Keyword::Else),
+                    "and" => TokenKind::Keyword(Keyword::And),
+                    "or" => TokenKind::Keyword(Keyword::Or),
+                    "true" => TokenKind::Keyword(Keyword::True),
+                    "false" => TokenKind::Keyword(Keyword::False),
+                    "for" => TokenKind::Keyword(Keyword::For),
+                    "while" => TokenKind::Keyword(Keyword::While),
+                    "print" => TokenKind::Keyword(Keyword::Print),
+                    _ => TokenKind::Ident,
+                }
+            }
+            c => TokenKind::Unknown {
+                ch: c,
+                line: self.cursor.line,
+            },
+        };
+
+        let lexeme = &self.src[start..self.cursor.byte_pos];
+        Token::new(
+            token_kind,
+            lexeme,
+            lexeme.chars().count(),
+            self.cursor.line,
+            col,
+        )
+    }
+
+    /// Peek into the next token. Peeked token is cached under the hood and will be returned in
+    /// `next_token()` call.
+    pub fn peek(&mut self) -> &Token<'src> {
+        if self.peeked.is_none() {
+            self.peeked = Some(self.next_token());
+        }
+        self.peeked.as_ref().unwrap()
+    }
+
+    /// Convenience method around `next_token()` to consume the next token and advance cursor.
+    pub fn advance(&mut self) {
+        self.next_token();
+    }
+
+    pub fn tokenize(&mut self) -> Vec<Token<'src>> {
+        self.by_ref().collect()
+    }
+
+    pub fn current_line(&self) -> usize {
+        self.cursor.line
+    }
+}
+
+impl<'src> Iterator for Lexer<'src> {
+    type Item = Token<'src>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let token = self.next_token();
+        match token.kind {
+            TokenKind::Eof => None,
+            _ => Some(token),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parens() {
+        let mut parser = Lexer::new("()");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::LeftParen))
+        );
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::RightParen))
+        );
+    }
+
+    #[test]
+    fn braces() {
+        let mut parser = Lexer::new("{}");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::LeftBrace))
+        );
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::RightBrace))
+        );
+    }
+
+    #[test]
+    fn comma() {
+        let mut parser = Lexer::new(",");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Comma))
+        );
+    }
+
+    #[test]
+    fn dot() {
+        let mut parser = Lexer::new(".");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Dot))
+        );
+    }
+
+    #[test]
+    fn minus() {
+        let mut parser = Lexer::new("-");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Minus))
+        );
+    }
+
+    #[test]
+    fn plus() {
+        let mut parser = Lexer::new("+");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Plus))
+        );
+    }
+
+    #[test]
+    fn star() {
+        let mut parser = Lexer::new("*");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Star))
+        );
+    }
+
+    #[test]
+    fn semicolon() {
+        let mut parser = Lexer::new(";");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Semicolon))
+        );
+    }
+
+    #[test]
+    fn iterates_over_all_tokens() {
+        let mut parser = Lexer::new("({})");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::LeftParen))
+        );
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::LeftBrace))
+        );
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::RightBrace))
+        );
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::RightParen))
+        );
+    }
+
+    #[test]
+    fn returns_unknown_token_kind_for_unexpected_token() {
+        let mut parser = Lexer::new("$");
+        let ch = parser.next().unwrap();
+        assert!(matches!(ch.kind, TokenKind::Unknown { .. }));
+    }
+
+    #[test]
+    fn returns_unknown_token_line() {
+        let mut parser = Lexer::new("$");
+        let ch = parser.next().unwrap();
+        assert!(matches!(ch.kind, TokenKind::Unknown { line: 1, .. }));
+    }
+
+    #[test]
+    fn equal() {
+        let mut parser = Lexer::new("=");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Eq))
+        );
+    }
+
+    #[test]
+    fn equal_equal() {
+        let mut parser = Lexer::new("==");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::EqEq))
+        );
+    }
+
+    #[test]
+    fn bang() {
+        let mut parser = Lexer::new("!");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Bang))
+        );
+    }
+
+    #[test]
+    fn bang_equal() {
+        let mut parser = Lexer::new("!=");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::BangEq))
+        );
+    }
+
+    #[test]
+    fn less() {
+        let mut parser = Lexer::new("<");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Less))
+        );
+    }
+
+    #[test]
+    fn less_equal() {
+        let mut parser = Lexer::new("<=");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::LessEqual))
+        );
+    }
+
+    #[test]
+    fn greater() {
+        let mut parser = Lexer::new(">");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Greater))
+        );
+    }
+
+    #[test]
+    fn greater_equal() {
+        let mut parser = Lexer::new(">=");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::GreaterEqual))
+        );
+    }
+
+    #[test]
+    fn slash() {
+        let mut parser = Lexer::new("/");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Slash))
+        );
+    }
+
+    #[test]
+    fn comment() {
+        let mut parser = Lexer::new("// comment");
+        assert!(
+            parser
+                .next()
+                .is_some_and(|v| matches!(v.kind, TokenKind::Comment))
+        );
+    }
+
+    #[test]
+    fn string() {
+        let mut parser = Lexer::new(r#""this is a test string""#);
+        let tokens = parser.tokenize();
+        assert!(matches!(
+            tokens.as_slice(),
+            [Token {
+                kind: TokenKind::Literal(Literal::String {
+                    s: "this is a test string",
+                    terminated: true
+                }),
+                lexeme: "\"this is a test string\"",
+                ..
+            }]
+        ))
+    }
+
+    #[test]
+    fn unterminaed_string() {
+        let mut parser = Lexer::new(r#""this is an unterminated string"#);
+        let tokens = parser.tokenize();
+        assert!(matches!(
+            tokens.as_slice(),
+            [Token {
+                kind: TokenKind::Literal(Literal::String {
+                    s: "",
+                    terminated: false
+                }),
+                lexeme: "\"this is an unterminated string",
+                ..
+            }]
+        ))
+    }
+
+    mod numbers {
+        use super::*;
+
+        #[test]
+        fn integer() {
+            let mut parser = Lexer::new("1234");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Literal(Literal::Number(1234.0)),
+                    lexeme: "1234",
+                    ..
+                }]
+            ))
+        }
+
+        #[test]
+        fn integer_starts_with_9() {
+            let mut parser = Lexer::new("9123");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Literal(Literal::Number(9123.0)),
+                    lexeme: "9123",
+                    ..
+                }]
+            ))
+        }
+
+        #[test]
+        fn float() {
+            let mut parser = Lexer::new("1234.32");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Literal(Literal::Number(1234.32)),
+                    lexeme: "1234.32",
+                    ..
+                }]
+            ))
+        }
+    }
+
+    mod identifiers {
+        use super::*;
+
+        #[test]
+        fn simple() {
+            let mut parser = Lexer::new("foo");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Ident,
+                    lexeme: "foo",
+                    ..
+                }]
+            ))
+        }
+
+        #[test]
+        fn leading_underscore() {
+            let mut parser = Lexer::new("_foo");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Ident,
+                    lexeme: "_foo",
+                    ..
+                }]
+            ))
+        }
+    }
+
+    mod keywords {
+        use super::*;
+
+        #[test]
+        fn var() {
+            let mut parser = Lexer::new("var");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Var),
+                    lexeme: "var",
+                    ..
+                }]
+            ))
+        }
+
+        #[test]
+        fn fun() {
+            let mut parser = Lexer::new("fun");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Fun),
+                    lexeme: "fun",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn k_return() {
+            let mut parser = Lexer::new("return");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Return),
+                    lexeme: "return",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn class() {
+            let mut parser = Lexer::new("class");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Class),
+                    lexeme: "class",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn this() {
+            let mut parser = Lexer::new("this");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::This),
+                    lexeme: "this",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn k_super() {
+            let mut parser = Lexer::new("super");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Super),
+                    lexeme: "super",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn nil() {
+            let mut parser = Lexer::new("nil");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Nil),
+                    lexeme: "nil",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn k_if() {
+            let mut parser = Lexer::new("if");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::If),
+                    lexeme: "if",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn k_else() {
+            let mut parser = Lexer::new("else");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Else),
+                    lexeme: "else",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn and() {
+            let mut parser = Lexer::new("and");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::And),
+                    lexeme: "and",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn or() {
+            let mut parser = Lexer::new("or");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Or),
+                    lexeme: "or",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn k_true() {
+            let mut parser = Lexer::new("true");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::True),
+                    lexeme: "true",
+                    ..
+                }]
+            ))
+        }
+        #[test]
+        fn k_false() {
+            let mut parser = Lexer::new("false");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::False),
+                    lexeme: "false",
+                    ..
+                }]
+            ))
+        }
+
+        #[test]
+        fn k_for() {
+            let mut parser = Lexer::new("for");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::For),
+                    lexeme: "for",
+                    ..
+                }]
+            ))
+        }
+
+        #[test]
+        fn k_while() {
+            let mut parser = Lexer::new("while");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::While),
+                    lexeme: "while",
+                    ..
+                }]
+            ))
+        }
+
+        #[test]
+        fn print() {
+            let mut parser = Lexer::new("print");
+            let tokens = parser.tokenize();
+            assert!(matches!(
+                tokens.as_slice(),
+                [Token {
+                    kind: TokenKind::Keyword(Keyword::Print),
+                    lexeme: "print",
+                    ..
+                }]
+            ))
+        }
+    }
+}
