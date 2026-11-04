@@ -494,9 +494,7 @@ impl<'src> Compiler<'src> {
             let peeked = self.lexer.peek();
 
             if let Ok(op) = Op::try_from(peeked) {
-                if let Some(l_bp) = op.postfix_bp()
-                    && let Some(op_code) = op.postfix_as_op_code()
-                {
+                if let Some(l_bp) = op.postfix_bp() {
                     if l_bp < min_bp {
                         break;
                     }
@@ -517,14 +515,18 @@ impl<'src> Compiler<'src> {
                         self.lexer.advance(); // step over right paren
                         // Expr::Cons(Op::Call, args);
                     };
-                    self.emit(op_code);
+                    // TODO: emit op code
+                    //
+                    // self.emit(op_code);
+                    // match op {
+                    //     Op::Call => todo!(),
+                    //     _ => unreachable!(),
+                    // }
                     // Continue to check the next operator
                     continue;
                 }
 
-                if let Some((l_bp, r_bp)) = op.infix_bp()
-                    && let Some(op_code) = op.infix_as_op_code()
-                {
+                if let Some((l_bp, r_bp)) = op.infix_bp() {
                     // If the next operator's left binding power is less than minimum, it is not strong
                     // enough to bind the next atom, so we break out of the loop with everything
                     // emitted so far as a bytecode and give up the execution back to caller.
@@ -534,7 +536,30 @@ impl<'src> Compiler<'src> {
                     // Otherwise, we advance with the rest of the expression.
                     self.lexer.advance();
                     self.emit_expr(r_bp)?;
-                    self.emit(op_code);
+                    match op {
+                        Op::Add => self.emit(OpCode::Add),
+                        Op::Minus => self.emit(OpCode::Sub),
+                        Op::Mult => self.emit(OpCode::Mult),
+                        Op::Div => self.emit(OpCode::Div),
+                        Op::EqEq => self.emit(OpCode::Equal),
+                        Op::NotEq => {
+                            self.emit(OpCode::Equal);
+                            self.emit(OpCode::Not);
+                        }
+                        Op::Greater => self.emit(OpCode::Greater),
+                        Op::GreaterEq => {
+                            self.emit(OpCode::Less);
+                            self.emit(OpCode::Not);
+                        }
+                        Op::Less => self.emit(OpCode::Less),
+                        Op::LessEq => {
+                            self.emit(OpCode::Greater);
+                            self.emit(OpCode::Not);
+                        }
+                        _ => unreachable!(
+                            "Operation should not be considered as infix or there's a bug."
+                        ),
+                    };
                     // Continue to check the next operator
                     continue;
                 }
@@ -851,29 +876,6 @@ impl Op {
     fn postfix_bp(&self) -> Option<u8> {
         match self {
             Self::Call => Some(20),
-            _ => None,
-        }
-    }
-
-    fn infix_as_op_code(&self) -> Option<OpCode> {
-        match self {
-            // Self::Assign => Some((2, 1)),
-            // Self::Or => Some((3, 2)),
-            // Self::And => Some((5, 4)),
-            // Self::Less
-            // | Self::LessEq
-            // | Self::Greater
-            // | Self::GreaterEq
-            // | Self::EqEq
-            // | Self::NotEq => Some((6, 7)),
-            Self::Add => Some(OpCode::Add),
-            Self::Minus => Some(OpCode::Sub),
-            Self::Mult => Some(OpCode::Mult),
-            Self::Div => Some(OpCode::Div),
-            Self::EqEq => Some(OpCode::Equal),
-            Self::Greater => Some(OpCode::Greater),
-            Self::Less => Some(OpCode::Less),
-            // Self::Dot => Some((30, 29)),
             _ => None,
         }
     }
@@ -1205,6 +1207,22 @@ mod tests {
     }
 
     #[test]
+    fn not_eq() {
+        let src = r#"return true != false;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_TRUE
+0001 | OP_FALSE
+0002 | OP_EQUAL
+0003 | OP_NOT
+0004 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
     fn greater() {
         let src = r#"return 1 > 2;"#;
         let chunk = compile(src).unwrap();
@@ -1220,6 +1238,22 @@ mod tests {
     }
 
     #[test]
+    fn greater_eq() {
+        let src = r#"return 1 >= 2;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_CONSTANT [0] 1.0
+0002 | OP_CONSTANT [1] 2.0
+0004 | OP_LESS
+0005 | OP_NOT
+0006 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
     fn less() {
         let src = r#"return 1 < 2;"#;
         let chunk = compile(src).unwrap();
@@ -1228,6 +1262,22 @@ mod tests {
 0002 | OP_CONSTANT [1] 2.0
 0004 | OP_LESS
 0005 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
+    fn less_eq() {
+        let src = r#"return 1 <= 2;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_CONSTANT [0] 1.0
+0002 | OP_CONSTANT [1] 2.0
+0004 | OP_GREATER
+0005 | OP_NOT
+0006 | OP_RETURN
 "#
         .strip_prefix("\n")
         .unwrap();
