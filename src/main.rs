@@ -1,7 +1,5 @@
-use lox_bc::Vm;
-use lox_bc::VmError;
-use std::env;
-use std::fs;
+use lox_bc::vm::{Vm, VmError};
+use std::{env, fs};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

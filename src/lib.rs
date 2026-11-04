@@ -19,6 +19,7 @@ pub enum OpCode {
     Sub,
     Mult,
     Div,
+    Not,
     Return,
 }
 
@@ -36,6 +37,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::Sub as u8 => Ok(OpCode::Sub),
             x if x == OpCode::Mult as u8 => Ok(OpCode::Mult),
             x if x == OpCode::Div as u8 => Ok(OpCode::Div),
+            x if x == OpCode::Not as u8 => Ok(OpCode::Not),
             x if x == OpCode::Negate as u8 => Ok(OpCode::Negate),
             _ => Err(()),
         }
@@ -60,6 +62,7 @@ impl Display for OpCode {
             Self::Sub => write!(f, "OP_SUBTRACT"),
             Self::Mult => write!(f, "OP_MULTIPLY"),
             Self::Div => write!(f, "OP_DIVIDE"),
+            Self::Not => write!(f, "OP_NOT"),
             Self::Return => write!(f, "OP_RETURN"),
         }
     }

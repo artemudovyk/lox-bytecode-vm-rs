@@ -398,20 +398,10 @@ impl<'src> Compiler<'src> {
                 Literal::Number(n) => self.emit_constant(Value::Number(n)),
                 _ => todo!("Handle other literal types."),
             },
-            TokenKind::Minus => {
-                let op = Op::try_from(&token).unwrap();
-                let bp = op.prefix_bp().unwrap();
-                self.emit_expr(bp)?;
-                self.emit(OpCode::Negate);
-            }
             TokenKind::Keyword(keyword) => match keyword {
                 Keyword::True => self.emit(OpCode::True),
                 Keyword::False => self.emit(OpCode::False),
                 Keyword::Nil => self.emit(OpCode::Nil),
-                // Keyword::Return => {
-                //     self.emit_expr(0)?;
-                //     self.emit(OpCode::Return);
-                // }
                 _ => todo!("Handle other keywords."),
             },
             TokenKind::LeftParen => {
@@ -420,6 +410,14 @@ impl<'src> Compiler<'src> {
                     TokenKind::RightParen,
                     "Expect ')' at the end of the grouping.",
                 )?;
+            }
+            // Only operators that can be used as prefix are expected at that point
+            _ if let Ok(op) = Op::try_from(&token)
+                && let Some(bp) = op.prefix_bp()
+                && let Some(op_code) = op.prefix_as_op_code() =>
+            {
+                self.emit_expr(bp)?;
+                self.emit(op_code);
             }
             _ => todo!("Handle other token kinds for lhs."),
         }
@@ -864,6 +862,22 @@ impl Op {
             _ => None,
         }
     }
+
+    fn infix_as_op_code(&self) -> Option<OpCode> {
+        todo!()
+    }
+
+    fn prefix_as_op_code(&self) -> Option<OpCode> {
+        match self {
+            Self::Minus => Some(OpCode::Negate),
+            Self::Bang => Some(OpCode::Not),
+            _ => None,
+        }
+    }
+
+    fn postfix_as_op_code(&self) -> Option<OpCode> {
+        todo!()
+    }
 }
 
 impl<'src> TryFrom<&Token<'src>> for Op {
@@ -1145,6 +1159,20 @@ mod tests {
         let expected = r#"
 0000 1 OP_NIL
 0001 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
+    fn not() {
+        let src = r#"return !true;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_TRUE
+0001 | OP_NOT
+0002 | OP_RETURN
 "#
         .strip_prefix("\n")
         .unwrap();

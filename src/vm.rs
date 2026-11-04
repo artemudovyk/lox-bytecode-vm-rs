@@ -157,6 +157,9 @@ impl Vm {
                         self.stack.push((v1 / v2)?);
                         self.move_cursor();
                     }
+                    OpCode::Not => {
+                        todo!("Interpret NOT op code")
+                    }
                     OpCode::Return => {
                         match self.stack.pop() {
                             Some(v) => println!("return {v}"),
