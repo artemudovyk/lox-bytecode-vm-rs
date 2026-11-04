@@ -167,6 +167,7 @@ impl Vm {
                         }
                         return Ok(());
                     }
+                    _ => todo!("Unhandled OpCode operator in the interpreter."),
                 }
             }
         }

@@ -494,55 +494,47 @@ impl<'src> Compiler<'src> {
             let peeked = self.lexer.peek();
 
             if let Ok(op) = Op::try_from(peeked) {
-                if let Some(l_bp) = op.postfix_bp() {
+                if let Some(l_bp) = op.postfix_bp()
+                    && let Some(op_code) = op.postfix_as_op_code()
+                {
                     if l_bp < min_bp {
                         break;
                     }
                     self.lexer.advance();
-                    match op {
-                        // If a function call, parse all comma-separated arguments first
-                        Op::Call => {
-                            // let mut args = vec![lhs]; // function name should be the first vec member
-                            let mut args = vec![];
-                            while !matches!(self.lexer.peek().kind, TokenKind::RightParen) {
-                                args.push(self.next_expr()?);
-                                if matches!(self.lexer.peek().kind, TokenKind::Comma) {
-                                    self.lexer.advance(); // step over comma
-                                    continue;
-                                }
-                                if args.len() >= 255 {
-                                    return Err(CompileError::TooManyArguments);
-                                }
+                    if op == Op::Call {
+                        // let mut args = vec![lhs]; // function name should be the first vec member
+                        let mut args = vec![];
+                        while !matches!(self.lexer.peek().kind, TokenKind::RightParen) {
+                            args.push(self.next_expr()?);
+                            if matches!(self.lexer.peek().kind, TokenKind::Comma) {
+                                self.lexer.advance(); // step over comma
+                                continue;
                             }
-                            self.lexer.advance(); // step over right paren
-                            Expr::Cons(Op::Call, args)
+                            if args.len() >= 255 {
+                                return Err(CompileError::TooManyArguments);
+                            }
                         }
-                        // Otherwise treat it like any other postfix operator
-                        // _ => Expr::Cons(op, vec![lhs]),
-                        _ => Expr::Cons(op, vec![]),
+                        self.lexer.advance(); // step over right paren
+                        // Expr::Cons(Op::Call, args);
                     };
+                    self.emit(op_code);
                     // Continue to check the next operator
                     continue;
                 }
 
-                if let Some((l_bp, r_bp)) = op.infix_bp() {
+                if let Some((l_bp, r_bp)) = op.infix_bp()
+                    && let Some(op_code) = op.infix_as_op_code()
+                {
                     // If the next operator's left binding power is less than minimum, it is not strong
-                    // enough to bind the next atom, so we break and return lhs we've built so far
+                    // enough to bind the next atom, so we break out of the loop with everything
+                    // emitted so far as a bytecode and give up the execution back to caller.
                     if l_bp < min_bp {
                         break;
                     }
+                    // Otherwise, we advance with the rest of the expression.
                     self.lexer.advance();
                     self.emit_expr(r_bp)?;
-                    // What is built so far
-                    // lhs = Expr::Cons(op, vec![lhs, rhs]);
-                    // Expr::Cons(op, vec![]);
-                    match op {
-                        Op::Add => self.emit(OpCode::Add),
-                        Op::Minus => self.emit(OpCode::Sub),
-                        Op::Mult => self.emit(OpCode::Mult),
-                        Op::Div => self.emit(OpCode::Div),
-                        _ => todo!("Unhandled binary op"),
-                    }
+                    self.emit(op_code);
                     // Continue to check the next operator
                     continue;
                 }
@@ -864,7 +856,26 @@ impl Op {
     }
 
     fn infix_as_op_code(&self) -> Option<OpCode> {
-        todo!()
+        match self {
+            // Self::Assign => Some((2, 1)),
+            // Self::Or => Some((3, 2)),
+            // Self::And => Some((5, 4)),
+            // Self::Less
+            // | Self::LessEq
+            // | Self::Greater
+            // | Self::GreaterEq
+            // | Self::EqEq
+            // | Self::NotEq => Some((6, 7)),
+            Self::Add => Some(OpCode::Add),
+            Self::Minus => Some(OpCode::Sub),
+            Self::Mult => Some(OpCode::Mult),
+            Self::Div => Some(OpCode::Div),
+            Self::EqEq => Some(OpCode::Equal),
+            Self::Greater => Some(OpCode::Greater),
+            Self::Less => Some(OpCode::Less),
+            // Self::Dot => Some((30, 29)),
+            _ => None,
+        }
     }
 
     fn prefix_as_op_code(&self) -> Option<OpCode> {
@@ -994,7 +1005,6 @@ pub enum CompileErrorKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{OpCode, value::Value};
 
     #[test]
     fn compiles_simple_expression() {
@@ -1173,6 +1183,51 @@ mod tests {
 0000 1 OP_TRUE
 0001 | OP_NOT
 0002 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
+    fn eq() {
+        let src = r#"return true == false;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_TRUE
+0001 | OP_FALSE
+0002 | OP_EQUAL
+0003 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
+    fn greater() {
+        let src = r#"return 1 > 2;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_CONSTANT [0] 1.0
+0002 | OP_CONSTANT [1] 2.0
+0004 | OP_GREATER
+0005 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
+    fn less() {
+        let src = r#"return 1 < 2;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_CONSTANT [0] 1.0
+0002 | OP_CONSTANT [1] 2.0
+0004 | OP_LESS
+0005 | OP_RETURN
 "#
         .strip_prefix("\n")
         .unwrap();
