@@ -78,87 +78,111 @@ impl Vm {
                     OpCode::Add => {
                         // NOTE: we pop values in a backwards order, so we assign the first pop to
                         // v2 instead of v1. Same for all other binary operators.
-                        let v2 = match self.stack.pop() {
-                            Some(v) => v,
-                            None => {
-                                return Err(VmError::RuntimeError(RuntimeError::Other(
-                                    "No value on the stack".to_owned(),
-                                )));
-                            }
+                        let Some(v2) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
                         };
-                        let v1 = match self.stack.pop() {
-                            Some(v) => v,
-                            None => {
-                                return Err(VmError::RuntimeError(RuntimeError::Other(
-                                    "No value on the stack".to_owned(),
-                                )));
-                            }
+                        let Some(v1) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
                         };
                         self.stack.push((v1 + v2)?);
                         self.move_cursor();
                     }
                     OpCode::Sub => {
-                        let v2 = match self.stack.pop() {
-                            Some(v) => v,
-                            None => {
-                                return Err(VmError::RuntimeError(RuntimeError::Other(
-                                    "No value on the stack".to_owned(),
-                                )));
-                            }
+                        let Some(v2) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
                         };
-                        let v1 = match self.stack.pop() {
-                            Some(v) => v,
-                            None => {
-                                return Err(VmError::RuntimeError(RuntimeError::Other(
-                                    "No value on the stack".to_owned(),
-                                )));
-                            }
+                        let Some(v1) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
                         };
                         self.stack.push((v1 - v2)?);
                         self.move_cursor();
                     }
                     OpCode::Mult => {
-                        let v2 = match self.stack.pop() {
-                            Some(v) => v,
-                            None => {
-                                return Err(VmError::RuntimeError(RuntimeError::Other(
-                                    "No value on the stack".to_owned(),
-                                )));
-                            }
+                        let Some(v2) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
                         };
-                        let v1 = match self.stack.pop() {
-                            Some(v) => v,
-                            None => {
-                                return Err(VmError::RuntimeError(RuntimeError::Other(
-                                    "No value on the stack".to_owned(),
-                                )));
-                            }
+                        let Some(v1) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
                         };
                         self.stack.push((v1 * v2)?);
                         self.move_cursor();
                     }
                     OpCode::Div => {
-                        let v2 = match self.stack.pop() {
-                            Some(v) => v,
-                            None => {
-                                return Err(VmError::RuntimeError(RuntimeError::Other(
-                                    "No value on the stack".to_owned(),
-                                )));
-                            }
+                        let Some(v2) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
                         };
-                        let v1 = match self.stack.pop() {
-                            Some(v) => v,
-                            None => {
-                                return Err(VmError::RuntimeError(RuntimeError::Other(
-                                    "No value on the stack".to_owned(),
-                                )));
-                            }
+                        let Some(v1) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
                         };
                         self.stack.push((v1 / v2)?);
                         self.move_cursor();
                     }
                     OpCode::Not => {
-                        todo!("Interpret NOT op code")
+                        let Some(v) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        self.stack.push(!v);
+                        self.move_cursor();
+                    }
+                    OpCode::Equal => {
+                        let Some(v2) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        let Some(v1) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        self.stack.push(Value::Bool(v1 == v2));
+                        self.move_cursor();
+                    }
+                    OpCode::Greater => {
+                        let Some(v2) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        let Some(v1) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        self.stack.push(Value::Bool(v1 > v2));
+                        self.move_cursor();
+                    }
+                    OpCode::Less => {
+                        let Some(v2) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        let Some(v1) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        self.stack.push(Value::Bool(v1 < v2));
+                        self.move_cursor();
                     }
                     OpCode::Return => {
                         match self.stack.pop() {

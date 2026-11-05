@@ -411,7 +411,7 @@ impl<'src> Compiler<'src> {
                     "Expect ')' at the end of the grouping.",
                 )?;
             }
-            // Only operators that can be used as prefix are expected at that point
+            // Prefix ops
             _ if let Ok(op) = Op::try_from(&token)
                 && let Some(bp) = op.prefix_bp()
                 && let Some(op_code) = op.prefix_as_op_code() =>
@@ -494,6 +494,7 @@ impl<'src> Compiler<'src> {
             let peeked = self.lexer.peek();
 
             if let Ok(op) = Op::try_from(peeked) {
+                // Postfix ops
                 if let Some(l_bp) = op.postfix_bp() {
                     if l_bp < min_bp {
                         break;
@@ -515,7 +516,7 @@ impl<'src> Compiler<'src> {
                         self.lexer.advance(); // step over right paren
                         // Expr::Cons(Op::Call, args);
                     };
-                    // TODO: emit op code
+                    // TODO: emit op code for postfix op
                     //
                     // self.emit(op_code);
                     // match op {
@@ -526,6 +527,7 @@ impl<'src> Compiler<'src> {
                     continue;
                 }
 
+                // Infix ops
                 if let Some((l_bp, r_bp)) = op.infix_bp() {
                     // If the next operator's left binding power is less than minimum, it is not strong
                     // enough to bind the next atom, so we break out of the loop with everything
@@ -581,11 +583,6 @@ impl<'src> Compiler<'src> {
 
             break;
         }
-
-        // Return what was built so far as lhs: if nothing was built in a loop above, then it will
-        // be an atom found at the beginning of the function. Otherwise it will be constructed
-        // expression for this subtree bound by binding power.
-        // Ok(lhs)
 
         Ok(())
     }
@@ -1278,6 +1275,28 @@ mod tests {
 0004 | OP_GREATER
 0005 | OP_NOT
 0006 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
+    fn combo_of_arithmetic_and_comparison_operators() {
+        let src = r#"!(5 - 4 > 3 * 2 == !nil);"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_CONSTANT [0] 5.0
+0002 | OP_CONSTANT [1] 4.0
+0004 | OP_SUBTRACT
+0005 | OP_CONSTANT [2] 3.0
+0007 | OP_CONSTANT [3] 2.0
+0009 | OP_MULTIPLY
+0010 | OP_GREATER
+0011 | OP_NIL
+0012 | OP_NOT
+0013 | OP_EQUAL
+0014 | OP_NOT
 "#
         .strip_prefix("\n")
         .unwrap();
