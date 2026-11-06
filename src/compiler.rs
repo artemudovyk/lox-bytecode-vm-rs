@@ -1,7 +1,7 @@
 use crate::{
     Chunk, OpCode,
     lexer::{Keyword, Lexer, Literal, Token, TokenKind},
-    value::Value,
+    value::{Obj, Value},
 };
 
 pub fn compile(src: &str) -> Result<Chunk, CompileError> {
@@ -348,35 +348,6 @@ impl<'src> Compiler<'src> {
         }
     }
 
-    // fn emit_expr(&mut self, expr: &Expr<'_>) {
-    //     match expr {
-    //         Expr::Atom(atom) => match atom {
-    //             Atom::Number(n) => {
-    //                 let idx = self.chunk.push_constant(Value::new(*n));
-    //                 self.chunk.push(OpCode::Constant, self.lexer.current_line());
-    //                 self.chunk.push(idx, self.lexer.current_line());
-    //             }
-    //             _ => todo!(),
-    //         },
-    //         Expr::Cons(op, exprs) => {
-    //             for expr in exprs {
-    //                 self.emit_expr(expr);
-    //             }
-    //             match op {
-    //                 Op::Add => self.chunk.push(OpCode::Add, self.lexer.current_line()),
-    //                 Op::Minus => match exprs.len() {
-    //                     1 => self.chunk.push(OpCode::Negate, self.lexer.current_line()),
-    //                     2 => self.chunk.push(OpCode::Sub, self.lexer.current_line()),
-    //                     _ => panic!("Unexpected number of args"),
-    //                 },
-    //                 Op::Mult => self.chunk.push(OpCode::Mult, self.lexer.current_line()),
-    //                 Op::Div => self.chunk.push(OpCode::Div, self.lexer.current_line()),
-    //                 _ => todo!(),
-    //             }
-    //         }
-    //     }
-    // }
-
     fn emit<T: Into<u8>>(&mut self, code: T) {
         self.chunk.push(code.into(), self.lexer.current_line());
     }
@@ -396,7 +367,12 @@ impl<'src> Compiler<'src> {
         match token.kind {
             TokenKind::Literal(literal) => match literal {
                 Literal::Number(n) => self.emit_constant(Value::Number(n)),
-                _ => todo!("Handle other literal types."),
+                Literal::String { s, terminated } => {
+                    if !terminated {
+                        todo!("Handle unterminated string");
+                    }
+                    self.emit_constant(Value::Obj(Obj::String(s.to_owned())));
+                }
             },
             TokenKind::Keyword(keyword) => match keyword {
                 Keyword::True => self.emit(OpCode::True),
@@ -1297,6 +1273,19 @@ mod tests {
 0012 | OP_NOT
 0013 | OP_EQUAL
 0014 | OP_NOT
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
+    fn string() {
+        let src = r#"return "string";"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_CONSTANT [0] "string"
+0002 | OP_RETURN
 "#
         .strip_prefix("\n")
         .unwrap();

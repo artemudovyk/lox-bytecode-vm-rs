@@ -10,6 +10,7 @@ pub enum Value {
     Number(f64),
     Bool(bool),
     Nil,
+    Obj(Obj),
 }
 
 impl Display for Value {
@@ -24,6 +25,9 @@ impl Display for Value {
             }
             Self::Bool(b) => write!(f, "{b}"),
             Self::Nil => write!(f, "nil"),
+            Self::Obj(obj) => match obj {
+                Obj::String(s) => write!(f, "\"{s}\""),
+            },
         }
     }
 }
@@ -33,7 +37,7 @@ impl Neg for Value {
     fn neg(self) -> Self::Output {
         match self {
             Self::Number(n) => Ok(Self::Number(-n)),
-            _ => Err(RuntimeError::OperandNotANumber),
+            _ => Err(RuntimeError::UnsupportedOperands),
         }
     }
 }
@@ -42,8 +46,11 @@ impl Add for Value {
     type Output = Result<Self, RuntimeError>;
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Self::Number(l), Self::Number(r)) => Ok(Self::Number(l + r)),
-            _ => Err(RuntimeError::OperandNotANumber),
+            (Self::Number(a), Self::Number(b)) => Ok(Self::Number(a + b)),
+            (Self::Obj(Obj::String(a)), Self::Obj(Obj::String(b))) => {
+                Ok(Self::Obj(Obj::String(format!("{a}{b}"))))
+            }
+            _ => Err(RuntimeError::UnsupportedOperands),
         }
     }
 }
@@ -53,7 +60,7 @@ impl Sub for Value {
     fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Self::Number(l), Self::Number(r)) => Ok(Self::Number(l - r)),
-            _ => Err(RuntimeError::OperandNotANumber),
+            _ => Err(RuntimeError::UnsupportedOperands),
         }
     }
 }
@@ -63,7 +70,7 @@ impl Mul for Value {
     fn mul(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Self::Number(l), Self::Number(r)) => Ok(Self::Number(l * r)),
-            _ => Err(RuntimeError::OperandNotANumber),
+            _ => Err(RuntimeError::UnsupportedOperands),
         }
     }
 }
@@ -73,7 +80,7 @@ impl Div for Value {
     fn div(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Self::Number(l), Self::Number(r)) => Ok(Self::Number(l / r)),
-            _ => Err(RuntimeError::OperandNotANumber),
+            _ => Err(RuntimeError::UnsupportedOperands),
         }
     }
 }
@@ -107,6 +114,12 @@ impl Not for Value {
             Self::Number(n) => Self::Bool(!(n == 0.0)),
             Self::Bool(v) => Self::Bool(!v),
             Self::Nil => Self::Bool(true),
+            _ => todo!(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum Obj {
+    String(String),
 }

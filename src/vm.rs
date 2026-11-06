@@ -228,7 +228,7 @@ pub enum VmError {
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
     #[error("Operand must be a number.")]
-    OperandNotANumber,
+    UnsupportedOperands,
     #[error("{0}")]
     Other(String),
 }
