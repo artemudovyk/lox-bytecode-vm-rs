@@ -24,6 +24,7 @@ pub enum OpCode {
     Greater,
     Less,
     Return,
+    Print,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -45,6 +46,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::Greater as u8 => Ok(OpCode::Greater),
             x if x == OpCode::Less as u8 => Ok(OpCode::Less),
             x if x == OpCode::Negate as u8 => Ok(OpCode::Negate),
+            x if x == OpCode::Print as u8 => Ok(OpCode::Print),
             _ => Err(()),
         }
     }
@@ -73,6 +75,7 @@ impl Display for OpCode {
             Self::Greater => write!(f, "OP_GREATER"),
             Self::Less => write!(f, "OP_LESS"),
             Self::Return => write!(f, "OP_RETURN"),
+            Self::Print => write!(f, "OP_PRINT"),
         }
     }
 }

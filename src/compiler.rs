@@ -135,14 +135,17 @@ impl<'src> Compiler<'src> {
     pub fn next_stmt(&mut self) -> Result<bool, CompileError> {
         #[allow(clippy::never_loop)]
         loop {
-            #[allow(clippy::match_single_binding)]
             match &self.lexer.peek().kind {
-                // TokenKind::Keyword(Keyword::Print) => {
-                //     self.lexer.advance(); // Consume `print` keyword
-                //     let expr = self.next_expr()?;
-                //     self.expect_token(TokenKind::Semicolon, "Expect expression.")?;
-                //     return Ok(true);
-                // }
+                TokenKind::Keyword(Keyword::Print) => {
+                    self.lexer.advance(); // Consume `print` keyword
+                    self.emit_expr(0)?;
+                    self.expect_token(
+                        TokenKind::Semicolon,
+                        "Expect ';' at the end of the print statement.",
+                    )?;
+                    self.emit(OpCode::Print);
+                    return Ok(true);
+                }
                 // TokenKind::Keyword(Keyword::Var) => {
                 //     self.lexer.advance(); // Consume `var` keyword
                 //     let ident = self.expect_token(TokenKind::Ident, "Expect identifier.")?;
@@ -1286,6 +1289,19 @@ mod tests {
         let expected = r#"
 0000 1 OP_CONSTANT [0] "string"
 0002 | OP_RETURN
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(expected, format!("{}", chunk));
+    }
+
+    #[test]
+    fn print_stmt() {
+        let src = r#"print "my-string";"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_CONSTANT [0] "my-string"
+0002 | OP_PRINT
 "#
         .strip_prefix("\n")
         .unwrap();

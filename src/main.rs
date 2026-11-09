@@ -21,7 +21,7 @@ fn main() {
 
             match vm.interpret(&file_contents) {
                 Ok(_) => {}
-                Err(VmError::CompileError) => {
+                Err(VmError::CompileError(_compile_error)) => {
                     std::process::exit(65);
                 }
                 Err(VmError::RuntimeError(_runtime_error)) => {

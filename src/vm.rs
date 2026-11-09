@@ -1,23 +1,37 @@
-use crate::{Chunk, OpCode, value::Value};
+use std::io::Write;
 
-pub struct Vm {
+use crate::{
+    Chunk, OpCode,
+    compiler::{CompileError, compile},
+    value::Value,
+};
+
+pub struct Vm<W: Write = std::io::Stdout> {
     // chunk: Option<Chunk>,
     // src: &'src str,
     cursor: *const u8,
     tracing: bool,
     stack: Vec<Value>,
+    writer: W,
 }
 
-impl Vm {
+impl Vm<std::io::Stdout> {
+    pub fn new() -> Self {
+        Self::with_writer(std::io::stdout())
+    }
+}
+
+impl<W: Write> Vm<W> {
     const STACK_MAX: usize = 256;
 
-    pub fn new() -> Self {
+    pub fn with_writer(writer: W) -> Self {
         Self {
             // chunk: None,
             // src: "",
             cursor: std::ptr::null(),
             tracing: false,
             stack: Vec::with_capacity(Self::STACK_MAX),
+            writer,
         }
     }
 
@@ -25,9 +39,9 @@ impl Vm {
         self.tracing = true;
     }
 
-    pub fn interpret(&mut self, _src: &str) -> Result<(), VmError> {
-        // let chunk = self.compiler.compile(self.src).unwrap();
-        // self.interpret_chunk(chunk).unwrap();
+    pub fn interpret(&mut self, src: &str) -> Result<(), VmError> {
+        let chunk = compile(src)?;
+        self.interpret_chunk(chunk)?;
         Ok(())
     }
 
@@ -191,7 +205,17 @@ impl Vm {
                         }
                         return Ok(());
                     }
-                    _ => todo!("Unhandled OpCode operator in the interpreter."),
+                    OpCode::Print => {
+                        match self.stack.pop() {
+                            Some(v) => writeln!(self.writer, "{}", v).map_err(|_| {
+                                VmError::RuntimeError(RuntimeError::Other(
+                                    "Couldn't write into the output.".to_owned(),
+                                ))
+                            })?,
+                            None => panic!("Nothing on the stack."),
+                        }
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -211,7 +235,7 @@ impl Vm {
     }
 }
 
-impl Default for Vm {
+impl Default for Vm<std::io::Stdout> {
     fn default() -> Self {
         Self::new()
     }
@@ -220,7 +244,7 @@ impl Default for Vm {
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
     #[error("compile error")]
-    CompileError,
+    CompileError(#[from] CompileError),
     #[error("runtime error")]
     RuntimeError(#[from] RuntimeError),
 }
@@ -231,4 +255,27 @@ pub enum RuntimeError {
     UnsupportedOperands,
     #[error("{0}")]
     Other(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_stmt() {
+        let src = r#"print "my-string";"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writer(&mut buf);
+        vm.interpret(src).unwrap();
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "\"my-string\"\n");
+    }
+
+    #[test]
+    fn print_expression_output() {
+        let src = r#"print 1 + 2 * 3;"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writer(&mut buf);
+        vm.interpret(src).unwrap();
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "7.0\n");
+    }
 }
