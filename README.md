@@ -1,4 +1,4 @@
-# lox-bytecode-vm-rs
+# Lox Bytecode VM in Rust
 
 My take on the Crafting Interpreters clox bytecode virtual machine using Rust.
 
