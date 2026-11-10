@@ -1,12 +1,15 @@
-use std::io::Write;
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+};
 
 use crate::{
     Chunk, OpCode,
     compiler::{CompileError, compile},
-    value::Value,
+    value::{Obj, Value},
 };
 
-pub struct Vm<W: Write = std::io::Stdout, E: Write = std::io::Stderr> {
+pub struct Vm<W: Write = io::Stdout, E: Write = io::Stderr> {
     // chunk: Option<Chunk>,
     // src: &'src str,
     cursor: *const u8,
@@ -14,11 +17,12 @@ pub struct Vm<W: Write = std::io::Stdout, E: Write = std::io::Stderr> {
     stack: Vec<Value>,
     writer: W,
     error_writer: E,
+    globals: HashMap<String, Value>,
 }
 
-impl Vm<std::io::Stdout> {
+impl Vm<io::Stdout> {
     pub fn new() -> Self {
-        Self::with_writers(std::io::stdout(), std::io::stderr())
+        Self::with_writers(io::stdout(), io::stderr())
     }
 }
 
@@ -34,6 +38,7 @@ impl<W: Write, E: Write> Vm<W, E> {
             stack: Vec::with_capacity(Self::STACK_MAX),
             writer,
             error_writer,
+            globals: HashMap::new(),
         }
     }
 
@@ -231,6 +236,23 @@ impl<W: Write, E: Write> Vm<W, E> {
                     OpCode::Pop => {
                         self.stack.pop();
                     }
+                    OpCode::DefineGlobal => {
+                        self.move_cursor();
+                        let Some(value) = self.stack.pop() else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        let Value::Obj(Obj::String(ident)) =
+                            chunk.constants[*self.cursor as usize].clone()
+                        else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "Unexpected identifier type".to_owned(),
+                            )));
+                        };
+                        self.globals.insert(ident, value);
+                        self.move_cursor();
+                    }
                 }
             }
 
@@ -252,7 +274,7 @@ impl<W: Write, E: Write> Vm<W, E> {
     }
 }
 
-impl Default for Vm<std::io::Stdout> {
+impl Default for Vm<io::Stdout> {
     fn default() -> Self {
         Self::new()
     }
@@ -271,14 +293,14 @@ pub enum RuntimeError {
     #[error("Operand must be a number.")]
     UnsupportedOperands,
     #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    IoError(#[from] io::Error),
     #[error("{0}")]
     Other(String),
 }
 
 // This allows to bubble up the io::Error without mapping where VmError is expected (e.g. `Vm::interpret()`).
-impl From<std::io::Error> for VmError {
-    fn from(value: std::io::Error) -> Self {
+impl From<io::Error> for VmError {
+    fn from(value: io::Error) -> Self {
         Self::RuntimeError(RuntimeError::from(value))
     }
 }
@@ -292,12 +314,13 @@ impl From<Vec<CompileError>> for VmError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
 
     #[test]
     fn print_stmt() {
         let src = r#"print "my-string";"#;
         let mut buf: Vec<u8> = Vec::new();
-        let mut vm = Vm::with_writers(&mut buf, std::io::stderr());
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "\"my-string\"\n");
     }
@@ -306,7 +329,7 @@ mod tests {
     fn print_expression_output() {
         let src = r#"print 1 + 2 * 3;"#;
         let mut buf: Vec<u8> = Vec::new();
-        let mut vm = Vm::with_writers(&mut buf, std::io::stderr());
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "7.0\n");
     }
@@ -318,7 +341,7 @@ print 1 + 2 * 3;
 print 2 + 3 * 4;
 "#;
         let mut buf: Vec<u8> = Vec::new();
-        let mut vm = Vm::with_writers(&mut buf, std::io::stderr());
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
         vm.tracing = true;
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "7.0\n14.0\n");
@@ -352,5 +375,15 @@ print 2 + 3 * 4;
             std::str::from_utf8(&errbuf).unwrap(),
             "[line 2] Error at ';': Expect ')' at the end of the grouping.\n[line 3] Error at '4': Expect ';' at the end of the expression statement.\n"
         );
+    }
+
+    #[test]
+    fn global_variable_declaration_sets_new_global() {
+        let src = r#"var x = 1.0;"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.tracing = true;
+        let _ = vm.interpret(src);
+        assert_eq!(vm.globals.get("x"), Some(&Value::Number(1.0)));
     }
 }

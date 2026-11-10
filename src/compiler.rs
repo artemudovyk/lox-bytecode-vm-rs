@@ -18,6 +18,7 @@ pub struct Compiler<'src> {
     cur_func: Option<&'src str>,
     panic_mode: bool,
     errors: Vec<CompileError>,
+    in_global_scope: bool,
 }
 
 #[allow(dead_code)]
@@ -30,6 +31,7 @@ impl<'src> Compiler<'src> {
             cur_func: None,
             panic_mode: false,
             errors: Vec::new(),
+            in_global_scope: true,
         }
     }
 
@@ -73,6 +75,9 @@ impl<'src> Compiler<'src> {
         }
     }
 
+    // TODO: I forgot why do I even put a bool return here. Some legacy from tree-walker most likely
+    // - reevaluate.
+    //
     /// Returns Ok(None) when reached end of file.
     pub fn next_stmt(&mut self) -> Result<Option<bool>, CompileError> {
         loop {
@@ -87,26 +92,31 @@ impl<'src> Compiler<'src> {
                     self.emit(OpCode::Print);
                     return Ok(Some(true));
                 }
-                // TokenKind::Keyword(Keyword::Var) => {
-                //     self.lexer.advance(); // Consume `var` keyword
-                //     let ident = self.expect_token(TokenKind::Ident, "Expect identifier.")?;
-                //     let init_val = match self.lexer.peek().kind {
-                //         TokenKind::Eq => {
-                //             self.lexer.advance();
-                //             self.next_expr()?
-                //         }
-                //         TokenKind::Semicolon => Expr::Atom(Atom::Nil),
-                //         _ => Err(CompileError::UnexpectedToken {
-                //             line: self.current_line(),
-                //             lexeme: self.lexer.peek().lexeme.to_owned(),
-                //         })?,
-                //     };
-                //     self.expect_token(TokenKind::Semicolon, "Expect ';'.")?;
-                //     return Ok(Some(Stmt::Var {
-                //         name: ident.lexeme,
-                //         init_val,
-                //     }));
-                // }
+                TokenKind::Keyword(Keyword::Var) => {
+                    self.lexer.advance(); // Consume `var` keyword
+                    let ident = self.expect_token(TokenKind::Ident, "Expect identifier.")?;
+                    match self.lexer.peek().kind {
+                        TokenKind::Eq => {
+                            self.lexer.advance();
+                            self.emit_expr(0)?;
+                        }
+                        TokenKind::Semicolon => self.emit(OpCode::Nil),
+                        _ => return Err(self.new_compile_error(CompileErrorKind::UnexpectedToken)),
+                    };
+                    self.expect_token(
+                        TokenKind::Semicolon,
+                        "Expect ';' at the end of a variable declaration.",
+                    )?;
+                    if self.in_global_scope {
+                        self.emit(OpCode::DefineGlobal);
+                        let idx =
+                            self.push_constant(Value::Obj(Obj::String(ident.lexeme.to_owned())));
+                        self.emit(idx);
+                    } else {
+                        todo!("Define variable in non-global scope");
+                    }
+                    return Ok(Some(true));
+                }
                 // TokenKind::Keyword(Keyword::If) => {
                 //     self.lexer.advance();
                 //     self.expect_token(TokenKind::LeftParen, "Expect '('.")?;
@@ -296,6 +306,12 @@ impl<'src> Compiler<'src> {
 
     fn emit<T: Into<u8>>(&mut self, code: T) {
         self.chunk.push(code.into(), self.lexer.current_line());
+    }
+
+    /// Returns an index of the pushed constant.
+    fn push_constant(&mut self, val: Value) -> u8 {
+        let idx = self.chunk.push_constant(val);
+        idx
     }
 
     fn emit_constant(&mut self, val: Value) {
@@ -1424,6 +1440,32 @@ mod tests {
         let expected = r#"
 0000 1 OP_CONSTANT [0] "my-string"
 0002 | OP_PRINT
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(format!("{}", chunk), expected);
+    }
+
+    #[test]
+    fn var_declaration_with_init_value() {
+        let src = r#"var x = 1.0;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_CONSTANT [0] 1.0
+0002 | OP_DEFINE_GLOBAL [1] "x"
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(format!("{}", chunk), expected);
+    }
+
+    #[test]
+    fn var_declaration_without_init_value() {
+        let src = r#"var x;"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_NIL
+0001 | OP_DEFINE_GLOBAL [0] "x"
 "#
         .strip_prefix("\n")
         .unwrap();

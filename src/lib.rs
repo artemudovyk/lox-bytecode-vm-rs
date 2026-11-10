@@ -1,4 +1,4 @@
-use crate::{compiler::Compiler, value::Value};
+use crate::value::Value;
 use std::fmt::Display;
 
 pub mod compiler;
@@ -27,6 +27,7 @@ pub enum OpCode {
     Print,
     /// Used with expression statements to discard the result pushed to the stack.
     Pop,
+    DefineGlobal,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -50,6 +51,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::Negate as u8 => Ok(OpCode::Negate),
             x if x == OpCode::Print as u8 => Ok(OpCode::Print),
             x if x == OpCode::Pop as u8 => Ok(OpCode::Pop),
+            x if x == OpCode::DefineGlobal as u8 => Ok(OpCode::DefineGlobal),
             _ => Err(()),
         }
     }
@@ -80,6 +82,7 @@ impl Display for OpCode {
             Self::Return => write!(f, "OP_RETURN"),
             Self::Print => write!(f, "OP_PRINT"),
             Self::Pop => write!(f, "OP_POP"),
+            Self::DefineGlobal => write!(f, "OP_DEFINE_GLOBAL"),
         }
     }
 }
@@ -176,6 +179,12 @@ impl Chunk {
                     println!("{op:<16} [{idx}] {val:>4}");
                     *offset += 2;
                 }
+                OpCode::DefineGlobal => {
+                    let idx = self.code[*offset + 1];
+                    let ident = &self.constants[idx as usize];
+                    println!("{op:<16} [{idx}] {ident:>4}");
+                    *offset += 2;
+                }
                 _ => {
                     println!("{op}");
                     *offset += 1;
@@ -215,6 +224,12 @@ impl Display for Chunk {
                         let idx = self.code[offset + 1];
                         let val = &self.constants[idx as usize];
                         writeln!(f, "{op} [{idx}] {val}")?;
+                        offset += 2;
+                    }
+                    OpCode::DefineGlobal => {
+                        let idx = self.code[offset + 1];
+                        let ident = &self.constants[idx as usize];
+                        writeln!(f, "{op} [{idx}] {ident}")?;
                         offset += 2;
                     }
                     _ => {
