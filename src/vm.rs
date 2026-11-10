@@ -6,25 +6,26 @@ use crate::{
     value::Value,
 };
 
-pub struct Vm<W: Write = std::io::Stdout> {
+pub struct Vm<W: Write = std::io::Stdout, E: Write = std::io::Stderr> {
     // chunk: Option<Chunk>,
     // src: &'src str,
     cursor: *const u8,
     tracing: bool,
     stack: Vec<Value>,
     writer: W,
+    error_writer: E,
 }
 
 impl Vm<std::io::Stdout> {
     pub fn new() -> Self {
-        Self::with_writer(std::io::stdout())
+        Self::with_writers(std::io::stdout(), std::io::stderr())
     }
 }
 
-impl<W: Write> Vm<W> {
+impl<W: Write, E: Write> Vm<W, E> {
     const STACK_MAX: usize = 256;
 
-    pub fn with_writer(writer: W) -> Self {
+    pub fn with_writers(writer: W, error_writer: E) -> Self {
         Self {
             // chunk: None,
             // src: "",
@@ -32,6 +33,7 @@ impl<W: Write> Vm<W> {
             tracing: false,
             stack: Vec::with_capacity(Self::STACK_MAX),
             writer,
+            error_writer,
         }
     }
 
@@ -40,7 +42,15 @@ impl<W: Write> Vm<W> {
     }
 
     pub fn interpret(&mut self, src: &str) -> Result<(), VmError> {
-        let chunk = compile(src)?;
+        let chunk = match compile(src) {
+            Ok(v) => v,
+            Err(errors) => {
+                for error in &errors {
+                    writeln!(self.error_writer, "{}", error)?;
+                }
+                return Err(VmError::CompileErrors(errors));
+            }
+        };
         chunk.disassemble("chunk");
         self.interpret_chunk(chunk)?;
         Ok(())
@@ -213,15 +223,14 @@ impl<W: Write> Vm<W> {
                     }
                     OpCode::Print => match self.stack.pop() {
                         Some(v) => {
-                            writeln!(self.writer, "{}", v).map_err(|_| {
-                                VmError::RuntimeError(RuntimeError::Other(
-                                    "Couldn't write into the output.".to_owned(),
-                                ))
-                            })?;
+                            writeln!(self.writer, "{}", v)?;
                             self.move_cursor()
                         }
-                        None => panic!("Nothing on the stack."),
+                        None => writeln!(self.error_writer, "Nothing on the stack.")?,
                     },
+                    OpCode::Pop => {
+                        self.stack.pop();
+                    }
                 }
             }
 
@@ -251,8 +260,8 @@ impl Default for Vm<std::io::Stdout> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
-    #[error("compile error")]
-    CompileError(#[from] CompileError),
+    #[error("compile errors")]
+    CompileErrors(Vec<CompileError>),
     #[error("runtime error")]
     RuntimeError(#[from] RuntimeError),
 }
@@ -261,8 +270,23 @@ pub enum VmError {
 pub enum RuntimeError {
     #[error("Operand must be a number.")]
     UnsupportedOperands,
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
     #[error("{0}")]
     Other(String),
+}
+
+// This allows to bubble up the io::Error without mapping where VmError is expected (e.g. `Vm::interpret()`).
+impl From<std::io::Error> for VmError {
+    fn from(value: std::io::Error) -> Self {
+        Self::RuntimeError(RuntimeError::from(value))
+    }
+}
+
+impl From<Vec<CompileError>> for VmError {
+    fn from(err: Vec<CompileError>) -> Self {
+        VmError::CompileErrors(err)
+    }
 }
 
 #[cfg(test)]
@@ -273,7 +297,7 @@ mod tests {
     fn print_stmt() {
         let src = r#"print "my-string";"#;
         let mut buf: Vec<u8> = Vec::new();
-        let mut vm = Vm::with_writer(&mut buf);
+        let mut vm = Vm::with_writers(&mut buf, std::io::stderr());
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "\"my-string\"\n");
     }
@@ -282,7 +306,7 @@ mod tests {
     fn print_expression_output() {
         let src = r#"print 1 + 2 * 3;"#;
         let mut buf: Vec<u8> = Vec::new();
-        let mut vm = Vm::with_writer(&mut buf);
+        let mut vm = Vm::with_writers(&mut buf, std::io::stderr());
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "7.0\n");
     }
@@ -294,9 +318,39 @@ print 1 + 2 * 3;
 print 2 + 3 * 4;
 "#;
         let mut buf: Vec<u8> = Vec::new();
-        let mut vm = Vm::with_writer(&mut buf);
+        let mut vm = Vm::with_writers(&mut buf, std::io::stderr());
         vm.tracing = true;
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "7.0\n14.0\n");
+    }
+
+    #[test]
+    fn capture_error() {
+        let src = r#"1 + 1"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut errbuf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, &mut errbuf);
+        vm.tracing = true;
+        let _ = vm.interpret(src);
+        assert_eq!(
+            std::str::from_utf8(&errbuf).unwrap(),
+            "[line 1] Error at '1': Expect ';' at the end of the expression statement.\n"
+        );
+    }
+
+    #[test]
+    fn capture_multiple_errors() {
+        let src = r#"
+1 + (2 * 3;
+2 + 4"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut errbuf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, &mut errbuf);
+        vm.tracing = true;
+        let _ = vm.interpret(src);
+        assert_eq!(
+            std::str::from_utf8(&errbuf).unwrap(),
+            "[line 2] Error at ';': Expect ')' at the end of the grouping.\n[line 3] Error at '4': Expect ';' at the end of the expression statement.\n"
+        );
     }
 }

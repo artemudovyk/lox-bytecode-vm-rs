@@ -115,7 +115,7 @@ pub enum Keyword {
     Print,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token<'src> {
     pub kind: TokenKind<'src>,
     pub lexeme: &'src str,
@@ -206,6 +206,7 @@ pub struct Lexer<'src> {
     src: &'src str,
     cursor: Cursor<'src>,
     peeked: Option<Token<'src>>,
+    prev_lexeme: Option<&'src str>,
 }
 
 impl<'src> Lexer<'src> {
@@ -214,6 +215,7 @@ impl<'src> Lexer<'src> {
             src,
             cursor: Cursor::new(src.chars()),
             peeked: None,
+            prev_lexeme: None,
         }
     }
 
@@ -330,13 +332,15 @@ impl<'src> Lexer<'src> {
         };
 
         let lexeme = &self.src[start..self.cursor.byte_pos];
-        Token::new(
+        let token = Token::new(
             token_kind,
             lexeme,
             lexeme.chars().count(),
             self.cursor.line,
             col,
-        )
+        );
+        self.prev_lexeme = Some(token.lexeme);
+        token
     }
 
     /// Peek into the next token. Peeked token is cached under the hood and will be returned in
@@ -359,6 +363,10 @@ impl<'src> Lexer<'src> {
 
     pub fn current_line(&self) -> usize {
         self.cursor.line
+    }
+
+    pub fn prev_lexeme(&self) -> Option<&'src str> {
+        self.prev_lexeme
     }
 }
 

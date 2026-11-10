@@ -4,7 +4,7 @@ use crate::{
     value::{Obj, Value},
 };
 
-pub fn compile(src: &str) -> Result<Chunk, CompileError> {
+pub fn compile(src: &str) -> Result<Chunk, Vec<CompileError>> {
     let mut compiler = Compiler::new(src);
     compiler.run()?;
     Ok(compiler.chunk)
@@ -16,6 +16,8 @@ pub struct Compiler<'src> {
     lexer: Lexer<'src>,
     in_class: CurrentClass<'src>,
     cur_func: Option<&'src str>,
+    panic_mode: bool,
+    errors: Vec<CompileError>,
 }
 
 #[allow(dead_code)]
@@ -26,114 +28,53 @@ impl<'src> Compiler<'src> {
             lexer: Lexer::new(src),
             in_class: CurrentClass::None,
             cur_func: None,
+            panic_mode: false,
+            errors: Vec::new(),
         }
     }
 
-    fn run(&mut self) -> Result<(), CompileError> {
-        while self.next_stmt()? {}
+    fn run(&mut self) -> Result<(), Vec<CompileError>> {
+        self.panic_mode = false;
+
+        loop {
+            match self.next_stmt() {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    self.error(e);
+                    self.sync_after_error();
+                    self.panic_mode = false;
+                }
+            }
+        }
+
+        if !self.errors.is_empty() {
+            return Err(std::mem::take(&mut self.errors));
+        }
+
         Ok(())
     }
 
-    fn assert_semicolon(&mut self) {
-        assert!(
-            matches!(self.lexer.next_token().kind, TokenKind::Semicolon),
-            "Expect ';' at the end of the statement."
-        );
+    fn error(&mut self, e: CompileError) {
+        if self.panic_mode {
+            return;
+        }
+        self.panic_mode = true;
+        self.errors.push(e);
     }
 
-    fn expect_token(
-        &mut self,
-        token_kind: TokenKind<'src>,
-        msg: &str,
-    ) -> Result<Token<'src>, CompileError> {
-        let token = self.lexer.next_token();
-        if token.kind != token_kind {
-            return Err(CompileError::ExpectedTokenNotFound(format!(
-                "Error at '{}': {}",
-                token.lexeme, msg
-            )));
+    fn new_compile_error(&mut self, kind: CompileErrorKind) -> CompileError {
+        CompileError {
+            kind,
+            line: self.current_line(),
+            lexeme: self.prev_lexeme().unwrap_or("<unknown>").to_owned(),
         }
-        Ok(token)
     }
 
-    fn parse_block(&mut self) -> Result<Vec<Stmt<'src>>, CompileError> {
-        let mut statements = vec![];
-        loop {
-            match self.lexer.peek().kind {
-                TokenKind::RightBrace => {
-                    self.lexer.advance();
-                    break;
-                }
-                // TODO: not sure about that, but I'll leave it here for a time being
-                // need to think about a better way to check if block is properly closed
-                TokenKind::Eof => {
-                    return Err(CompileError::UnclosedBlock {
-                        line: self.current_line(),
-                    });
-                }
-                TokenKind::Comment => {
-                    self.lexer.advance();
-                }
-                // Treat all identifiers in the block as function declarations if we are inside the
-                // class declaration.
-                TokenKind::Ident if self.in_class.in_scope() && self.cur_func.is_none() => {
-                    statements.push(self.parse_function()?)
-                }
-                // _ => statements.push(
-                //     self.next_stmt()?
-                //         .expect("Statement is expected at this point"),
-                // ),
-                _ => todo!("Unhandled token kind while parsing block."),
-            }
-        }
-        Ok(statements)
-    }
-
-    fn parse_function(&mut self) -> Result<Stmt<'src>, CompileError> {
-        let ident = self
-            .expect_token(TokenKind::Ident, "Expect identifier.")?
-            .lexeme;
-        let prev_func = self.cur_func;
-        self.cur_func = Some(ident);
-        // TODO: why it fails in my last test?
-        self.expect_token(TokenKind::LeftParen, "Expect a '('.")?;
-        let mut params = vec![];
-        while !matches!(self.lexer.peek().kind, TokenKind::RightParen) {
-            let t = self.lexer.next_token();
-            match t.kind {
-                TokenKind::Ident => {
-                    params.push(t.lexeme);
-                    if matches!(self.lexer.peek().kind, TokenKind::Ident) {
-                        return Err(CompileError::MissingCommaBetweenParameters);
-                    }
-                }
-                TokenKind::Comma => continue,
-                _ => panic!("Unexpected token"),
-            }
-        }
-        self.expect_token(TokenKind::RightParen, "Expect ')'.")?;
-        self.expect_token(TokenKind::LeftBrace, "Expect '{'.")?;
-        let body = self.parse_block()?;
-        if self.in_class.in_scope()
-            && self.cur_func.is_some_and(|f| f == "init")
-            && body.iter().any(|stmt| match stmt {
-                Stmt::Return(Some(Expr::Atom(Atom::Nil))) => false,
-                Stmt::Return(Some(_)) => true,
-                _ => false,
-            })
-        {
-            return Err(CompileError::InvalidInitializerReturn);
-        }
-        self.cur_func = prev_func;
-        Ok(Stmt::FunDecl {
-            ident,
-            parameters: params,
-            body,
-        })
-    }
-
-    pub fn next_stmt(&mut self) -> Result<bool, CompileError> {
-        #[allow(clippy::never_loop)]
+    /// Returns Ok(None) when reached end of file.
+    pub fn next_stmt(&mut self) -> Result<Option<bool>, CompileError> {
         loop {
             match &self.lexer.peek().kind {
                 TokenKind::Keyword(Keyword::Print) => {
@@ -144,7 +85,7 @@ impl<'src> Compiler<'src> {
                         "Expect ';' at the end of the print statement.",
                     )?;
                     self.emit(OpCode::Print);
-                    return Ok(true);
+                    return Ok(Some(true));
                 }
                 // TokenKind::Keyword(Keyword::Var) => {
                 //     self.lexer.advance(); // Consume `var` keyword
@@ -314,7 +255,7 @@ impl<'src> Compiler<'src> {
                             TokenKind::Semicolon => {
                                 self.lexer.advance();
                                 self.emit(OpCode::Return);
-                                return Ok(false);
+                                return Ok(Some(false));
                             }
                             _ => {
                                 self.emit_expr(0)?;
@@ -323,7 +264,7 @@ impl<'src> Compiler<'src> {
                                     "Expect ';' at the end of the return statement.",
                                 )?;
                                 self.emit(OpCode::Return);
-                                return Ok(false);
+                                return Ok(Some(false));
                             }
                         }
                     }
@@ -338,14 +279,16 @@ impl<'src> Compiler<'src> {
                     self.lexer.advance();
                     continue;
                 }
-                TokenKind::Eof => return Ok(false),
+                TokenKind::Eof => return Ok(None),
                 // Fallback to expression statement;
                 _ => {
-                    // let expr = self.expr_bp(0)?;
                     self.emit_expr(0)?;
-                    self.expect_token(TokenKind::Semicolon, "Expect ';'.")?;
-                    // self.emit_expr(&expr);
-                    return Ok(true);
+                    self.expect_token(
+                        TokenKind::Semicolon,
+                        "Expect ';' at the end of the expression statement.",
+                    )?;
+                    self.emit(OpCode::Pop);
+                    return Ok(Some(true));
                 }
             }
         }
@@ -398,7 +341,7 @@ impl<'src> Compiler<'src> {
                 self.emit_expr(bp)?;
                 self.emit(op_code);
             }
-            _ => todo!("Handle other token kinds for lhs."),
+            _ => return Err(self.new_compile_error(CompileErrorKind::UnexpectedToken)),
         }
 
         // let mut lhs = {
@@ -479,22 +422,22 @@ impl<'src> Compiler<'src> {
                         break;
                     }
                     self.lexer.advance();
-                    if op == Op::Call {
-                        // let mut args = vec![lhs]; // function name should be the first vec member
-                        let mut args = vec![];
-                        while !matches!(self.lexer.peek().kind, TokenKind::RightParen) {
-                            args.push(self.next_expr()?);
-                            if matches!(self.lexer.peek().kind, TokenKind::Comma) {
-                                self.lexer.advance(); // step over comma
-                                continue;
-                            }
-                            if args.len() >= 255 {
-                                return Err(CompileError::TooManyArguments);
-                            }
-                        }
-                        self.lexer.advance(); // step over right paren
-                        // Expr::Cons(Op::Call, args);
-                    };
+                    // if op == Op::Call {
+                    //     // let mut args = vec![lhs]; // function name should be the first vec member
+                    //     let mut args = vec![];
+                    //     while !matches!(self.lexer.peek().kind, TokenKind::RightParen) {
+                    //         args.push(self.next_expr()?);
+                    //         if matches!(self.lexer.peek().kind, TokenKind::Comma) {
+                    //             self.lexer.advance(); // step over comma
+                    //             continue;
+                    //         }
+                    //         if args.len() >= 255 {
+                    //             return Err(CompileError::TooManyArguments);
+                    //         }
+                    //     }
+                    //     self.lexer.advance(); // step over right paren
+                    //     // Expr::Cons(Op::Call, args);
+                    // };
                     // TODO: emit op code for postfix op
                     //
                     // self.emit(op_code);
@@ -582,7 +525,8 @@ impl<'src> Compiler<'src> {
                         // },
                     })
                 } else {
-                    return Err(CompileError::InvalidThisUsage);
+                    // return Err(CompileError::InvalidThisUsage);
+                    todo!()
                 }
             } else if matches!(token.kind, TokenKind::Keyword(Keyword::Super)) {
                 match self.in_class {
@@ -596,28 +540,33 @@ impl<'src> Compiler<'src> {
                                 //     col: 0,
                                 // },
                             }),
-                            _ => return Err(CompileError::SuperMustBeFollowedByGetExpression),
+                            // _ => return Err(CompileError::SuperMustBeFollowedByGetExpression),
+                            _ => todo!(),
                         }
                     }
                     CurrentClass::Class(_) => {
-                        return Err(CompileError::SuperInClassWithNoSuperclassNotAllowed);
+                        // return Err(CompileError::SuperInClassWithNoSuperclassNotAllowed);
+                        todo!()
                     }
-                    CurrentClass::None => return Err(CompileError::SuperOutsideClassNotAllowed),
+                    // CurrentClass::None => return Err(CompileError::SuperOutsideClassNotAllowed),
+                    CurrentClass::None => todo!(),
                 }
             } else if token.unterminated() {
-                return Err(CompileError::UnterminatedString {
-                    line: token.line,
-                    lexeme: token.lexeme.to_owned(),
-                });
+                // return Err(CompileError::UnterminatedString {
+                //     line: token.line,
+                //     lexeme: token.lexeme.to_owned(),
+                // });
+                todo!()
             } else if matches!(token.kind, TokenKind::LeftParen) {
                 let members = self.expr_bp(0)?;
                 {
                     let t = self.lexer.next_token();
                     if !matches!(t.kind, TokenKind::RightParen) {
-                        return Err(CompileError::UnmatchedParen {
-                            line: t.line,
-                            lexeme: t.lexeme.to_owned(),
-                        });
+                        // return Err(CompileError::UnmatchedParen {
+                        //     line: t.line,
+                        //     lexeme: t.lexeme.to_owned(),
+                        // });
+                        todo!()
                     }
                 }
                 Expr::Cons(Op::Group, vec![members])
@@ -627,10 +576,11 @@ impl<'src> Compiler<'src> {
                 let rhs = self.expr_bp(bp)?;
                 Expr::Cons(op, vec![rhs])
             } else {
-                return Err(CompileError::UnexpectedToken {
-                    line: token.line,
-                    lexeme: token.lexeme.to_owned(),
-                });
+                // return Err(CompileError::UnexpectedToken {
+                //     line: token.line,
+                //     lexeme: token.lexeme.to_owned(),
+                // });
+                todo!()
             }
         };
 
@@ -654,7 +604,8 @@ impl<'src> Compiler<'src> {
                                     continue;
                                 }
                                 if args.len() >= 255 {
-                                    return Err(CompileError::TooManyArguments);
+                                    // return Err(CompileError::TooManyArguments);
+                                    todo!()
                                 }
                             }
                             self.lexer.advance(); // step over right paren
@@ -705,8 +656,145 @@ impl<'src> Compiler<'src> {
         Ok(lhs)
     }
 
+    fn assert_semicolon(&mut self) {
+        assert!(
+            matches!(self.lexer.next_token().kind, TokenKind::Semicolon),
+            "Expect ';' at the end of the statement."
+        );
+    }
+
+    fn expect_token(
+        &mut self,
+        token_kind: TokenKind<'src>,
+        msg: &str,
+    ) -> Result<Token<'src>, CompileError> {
+        let token = self.lexer.next_token();
+        if token.kind != token_kind {
+            return Err(CompileError {
+                kind: CompileErrorKind::ExpectedTokenNotFound(msg.to_owned()),
+                line: self.current_line(),
+                lexeme: self.prev_lexeme().unwrap_or_default().to_owned(),
+            });
+        }
+        Ok(token)
+    }
+
+    fn parse_block(&mut self) -> Result<Vec<Stmt<'src>>, CompileError> {
+        let mut statements = vec![];
+        loop {
+            match self.lexer.peek().kind {
+                TokenKind::RightBrace => {
+                    self.lexer.advance();
+                    break;
+                }
+                // TODO: not sure about that, but I'll leave it here for a time being
+                // need to think about a better way to check if block is properly closed
+                TokenKind::Eof => {
+                    // return Err(CompileError::UnclosedBlock {
+                    //     line: self.current_line(),
+                    // });
+                    todo!()
+                }
+                TokenKind::Comment => {
+                    self.lexer.advance();
+                }
+                // Treat all identifiers in the block as function declarations if we are inside the
+                // class declaration.
+                TokenKind::Ident if self.in_class.in_scope() && self.cur_func.is_none() => {
+                    statements.push(self.parse_function()?)
+                }
+                // _ => statements.push(
+                //     self.next_stmt()?
+                //         .expect("Statement is expected at this point"),
+                // ),
+                _ => todo!("Unhandled token kind while parsing block."),
+            }
+        }
+        Ok(statements)
+    }
+
+    fn parse_function(&mut self) -> Result<Stmt<'src>, CompileError> {
+        let ident = self
+            .expect_token(TokenKind::Ident, "Expect identifier.")?
+            .lexeme;
+        let prev_func = self.cur_func;
+        self.cur_func = Some(ident);
+        // TODO: why it fails in my last test?
+        self.expect_token(TokenKind::LeftParen, "Expect a '('.")?;
+        let mut params = vec![];
+        while !matches!(self.lexer.peek().kind, TokenKind::RightParen) {
+            let t = self.lexer.next_token();
+            match t.kind {
+                TokenKind::Ident => {
+                    params.push(t.lexeme);
+                    if matches!(self.lexer.peek().kind, TokenKind::Ident) {
+                        // return Err(CompileError::MissingCommaBetweenParameters);
+                        todo!()
+                    }
+                }
+                TokenKind::Comma => continue,
+                _ => panic!("Unexpected token"),
+            }
+        }
+        self.expect_token(TokenKind::RightParen, "Expect ')'.")?;
+        self.expect_token(TokenKind::LeftBrace, "Expect '{'.")?;
+        let body = self.parse_block()?;
+        if self.in_class.in_scope()
+            && self.cur_func.is_some_and(|f| f == "init")
+            && body.iter().any(|stmt| match stmt {
+                Stmt::Return(Some(Expr::Atom(Atom::Nil))) => false,
+                Stmt::Return(Some(_)) => true,
+                _ => false,
+            })
+        {
+            return Err(CompileError {
+                kind: CompileErrorKind::InvalidInitializerReturn,
+                line: self.current_line(),
+                lexeme: self.prev_lexeme().unwrap_or("<unknown>").to_owned(),
+            });
+        }
+        self.cur_func = prev_func;
+        Ok(Stmt::FunDecl {
+            ident,
+            parameters: params,
+            body,
+        })
+    }
+
     pub fn current_line(&self) -> usize {
         self.lexer.current_line()
+    }
+
+    pub fn prev_lexeme(&self) -> Option<&'src str> {
+        self.lexer.prev_lexeme()
+    }
+
+    // Looks for the place where the next statement should start to avoid parsing the rest of the
+    // statement when the error occurs and continue from the possible healthy point.
+    fn sync_after_error(&mut self) {
+        if self.prev_lexeme() == Some(";") {
+            return;
+        }
+
+        loop {
+            let token = self.lexer.next_token();
+            #[allow(clippy::collapsible_match)]
+            match &token.kind {
+                TokenKind::Eof
+                | TokenKind::Semicolon
+                | TokenKind::Keyword(Keyword::Var)
+                | TokenKind::Keyword(Keyword::Fun)
+                | TokenKind::Keyword(Keyword::Class)
+                | TokenKind::Keyword(Keyword::For)
+                | TokenKind::Keyword(Keyword::If)
+                | TokenKind::Keyword(Keyword::While)
+                | TokenKind::Keyword(Keyword::Print)
+                | TokenKind::Keyword(Keyword::Return) => {
+                    return;
+                }
+                _ => continue,
+            }
+        }
     }
 }
 
@@ -918,8 +1006,16 @@ impl<'src> CurrentClass<'src> {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("[line {line}] Error at '{lexeme}': {kind}")]
+pub struct CompileError {
+    kind: CompileErrorKind,
+    line: usize,
+    lexeme: String,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq)]
-pub enum CompileError {
+pub enum CompileErrorOld {
     #[error("[line {line}] Error at '{lexeme}': Expect expression.")]
     UnexpectedToken { line: usize, lexeme: String },
     #[error("[line {line}] Error at '{lexeme}'. Expect ')'.")]
@@ -954,23 +1050,39 @@ pub enum CompileError {
     SuperMustBeFollowedByGetExpression,
 }
 
+#[derive(Debug, thiserror::Error)]
 pub enum CompileErrorKind {
-    UnexpectedToken { line: usize, lexeme: String },
-    UnmatchedParen { line: usize, lexeme: String },
-    UnterminatedString { line: usize, lexeme: String },
+    #[error("Expect expression.")]
+    UnexpectedToken,
+    #[error("Unmatched paren.")]
+    UnmatchedParen,
+    #[error("Unterminated string.")]
+    UnterminatedString,
     // TODO: somewhat collides with UnexpectedToken - think about a better name for both
     // I want for this error message
+    #[error("{0}")]
     ExpectedTokenNotFound(String),
+    #[error("[line {line}] Error at end: Expect '}}'.")]
     UnclosedBlock { line: usize },
+    #[error("[line {line}] Expected statement after if condition.")]
     EmptyIfStatement { line: usize },
+    #[error("[line {line}] Expected statement after while condition.")]
     EmptyWhileStatement { line: usize },
+    #[error("Too many arguments. Functions can't have more than 255 arguments.")]
     TooManyArguments,
+    #[error("Missing comma between parameters in function declaration.")]
     MissingCommaBetweenParameters,
+    #[error("Can't use 'this' outside of a class.")]
     InvalidThisUsage,
+    #[error("Can't return a value from an initializer.")]
     InvalidInitializerReturn,
+    #[error("A class can't inherit from itself.")]
     InheritFromItselfNotAllowed,
+    #[error("Can't use 'super' in a class with no superclass.")]
     SuperInClassWithNoSuperclassNotAllowed,
+    #[error("Can't use 'super' outside of a class.")]
     SuperOutsideClassNotAllowed,
+    #[error("'super' must be followed by get expression.")]
     SuperMustBeFollowedByGetExpression,
 }
 
@@ -988,35 +1100,38 @@ mod tests {
     fn compiles_simple_expression() {
         let src = "1 + 2;";
         let chunk = compile(src).unwrap();
-        // TODO: this bytecode needs to split statements
         let expected = r#"
 0000 1 OP_CONSTANT [0] 1.0
 0002 | OP_CONSTANT [1] 2.0
 0004 | OP_ADD
+0005 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
     fn emits_correct_lines() {
-        let src = r#"1 + 2;
+        let src = r#"
+1 + 2;
 3 - 4;
         "#;
         let chunk = compile(src).unwrap();
         // TODO: this bytecode needs to split statements
         let expected = r#"
-0000 1 OP_CONSTANT [0] 1.0
+0000 2 OP_CONSTANT [0] 1.0
 0002 | OP_CONSTANT [1] 2.0
 0004 | OP_ADD
-0005 2 OP_CONSTANT [2] 3.0
-0007 | OP_CONSTANT [3] 4.0
-0009 | OP_SUBTRACT
+0005 | OP_POP
+0006 3 OP_CONSTANT [2] 3.0
+0008 | OP_CONSTANT [3] 4.0
+0010 | OP_SUBTRACT
+0011 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1029,13 +1144,15 @@ mod tests {
         let expected = r#"
 0000 1 OP_CONSTANT [0] 1.0
 0002 | OP_NEGATE
-0003 2 OP_CONSTANT [1] 10.0
-0005 | OP_CONSTANT [2] 5.0
-0007 | OP_SUBTRACT
+0003 | OP_POP
+0004 2 OP_CONSTANT [1] 10.0
+0006 | OP_CONSTANT [2] 5.0
+0008 | OP_SUBTRACT
+0009 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1050,10 +1167,11 @@ mod tests {
 0007 | OP_ADD
 0008 | OP_CONSTANT [3] 4.0
 0010 | OP_SUBTRACT
+0011 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1066,10 +1184,11 @@ mod tests {
 0004 | OP_CONSTANT [2] 3.0
 0006 | OP_MULTIPLY
 0007 | OP_ADD
+0008 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1082,10 +1201,11 @@ mod tests {
 0004 | OP_ADD
 0005 | OP_CONSTANT [2] 3.0
 0007 | OP_MULTIPLY
+0008 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1096,10 +1216,11 @@ mod tests {
 0000 1 OP_CONSTANT [0] 4.0
 0002 | OP_CONSTANT [1] 2.0
 0004 | OP_DIVIDE
+0005 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1114,7 +1235,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1127,7 +1248,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
 
         let src = r#"return true;"#;
         let chunk = compile(src).unwrap();
@@ -1137,7 +1258,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk))
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1150,7 +1271,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1164,7 +1285,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1179,7 +1300,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1195,7 +1316,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1210,7 +1331,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1226,7 +1347,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1241,7 +1362,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1257,7 +1378,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1276,10 +1397,11 @@ mod tests {
 0012 | OP_NOT
 0013 | OP_EQUAL
 0014 | OP_NOT
+0015 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1292,7 +1414,7 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 
     #[test]
@@ -1305,6 +1427,6 @@ mod tests {
 "#
         .strip_prefix("\n")
         .unwrap();
-        assert_eq!(expected, format!("{}", chunk));
+        assert_eq!(format!("{}", chunk), expected);
     }
 }

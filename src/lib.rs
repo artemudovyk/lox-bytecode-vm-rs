@@ -25,6 +25,8 @@ pub enum OpCode {
     Less,
     Return,
     Print,
+    /// Used with expression statements to discard the result pushed to the stack.
+    Pop,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -47,6 +49,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::Less as u8 => Ok(OpCode::Less),
             x if x == OpCode::Negate as u8 => Ok(OpCode::Negate),
             x if x == OpCode::Print as u8 => Ok(OpCode::Print),
+            x if x == OpCode::Pop as u8 => Ok(OpCode::Pop),
             _ => Err(()),
         }
     }
@@ -76,6 +79,7 @@ impl Display for OpCode {
             Self::Less => write!(f, "OP_LESS"),
             Self::Return => write!(f, "OP_RETURN"),
             Self::Print => write!(f, "OP_PRINT"),
+            Self::Pop => write!(f, "OP_POP"),
         }
     }
 }
