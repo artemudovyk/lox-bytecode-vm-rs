@@ -41,17 +41,23 @@ impl<W: Write> Vm<W> {
 
     pub fn interpret(&mut self, src: &str) -> Result<(), VmError> {
         let chunk = compile(src)?;
+        chunk.disassemble("chunk");
         self.interpret_chunk(chunk)?;
         Ok(())
     }
 
     fn interpret_chunk(&mut self, chunk: Chunk) -> Result<(), VmError> {
-        // SAFETY:
-        // - Each chunk ends with the OpCode::Return.
-        // - chunk.code[] is never empty.
+        if chunk.code.is_empty() {
+            todo!("Return error that the chunk bytecode vec is empty");
+        }
+
+        chunk.disassemble("test");
+
         unsafe {
             self.cursor = &chunk.code[0] as *const u8;
-            loop {
+            let last = &chunk.code[chunk.code.len() - 1] as *const u8;
+
+            while last.offset_from(self.cursor) >= 0 {
                 if self.tracing {
                     print!("          [");
                     for val in &self.stack {
@@ -205,19 +211,21 @@ impl<W: Write> Vm<W> {
                         }
                         return Ok(());
                     }
-                    OpCode::Print => {
-                        match self.stack.pop() {
-                            Some(v) => writeln!(self.writer, "{}", v).map_err(|_| {
+                    OpCode::Print => match self.stack.pop() {
+                        Some(v) => {
+                            writeln!(self.writer, "{}", v).map_err(|_| {
                                 VmError::RuntimeError(RuntimeError::Other(
                                     "Couldn't write into the output.".to_owned(),
                                 ))
-                            })?,
-                            None => panic!("Nothing on the stack."),
+                            })?;
+                            self.move_cursor()
                         }
-                        return Ok(());
-                    }
+                        None => panic!("Nothing on the stack."),
+                    },
                 }
             }
+
+            Ok(())
         }
     }
 
@@ -277,5 +285,18 @@ mod tests {
         let mut vm = Vm::with_writer(&mut buf);
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "7.0\n");
+    }
+
+    #[test]
+    fn multiple_statements() {
+        let src = r#"
+print 1 + 2 * 3;
+print 2 + 3 * 4;
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writer(&mut buf);
+        vm.tracing = true;
+        vm.interpret(src).unwrap();
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "7.0\n14.0\n");
     }
 }
