@@ -28,6 +28,7 @@ pub enum OpCode {
     /// Used with expression statements to discard the result pushed to the stack.
     Pop,
     DefineGlobal,
+    GetGlobal,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -52,6 +53,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::Print as u8 => Ok(OpCode::Print),
             x if x == OpCode::Pop as u8 => Ok(OpCode::Pop),
             x if x == OpCode::DefineGlobal as u8 => Ok(OpCode::DefineGlobal),
+            x if x == OpCode::GetGlobal as u8 => Ok(OpCode::GetGlobal),
             _ => Err(()),
         }
     }
@@ -83,6 +85,7 @@ impl Display for OpCode {
             Self::Print => write!(f, "OP_PRINT"),
             Self::Pop => write!(f, "OP_POP"),
             Self::DefineGlobal => write!(f, "OP_DEFINE_GLOBAL"),
+            Self::GetGlobal => write!(f, "OP_GET_GLOBAL"),
         }
     }
 }
@@ -182,7 +185,13 @@ impl Chunk {
                 OpCode::DefineGlobal => {
                     let idx = self.code[*offset + 1];
                     let ident = &self.constants[idx as usize];
-                    println!("{op:<16} [{idx}] {ident:>4}");
+                    println!("{op:<16} {ident:>4}");
+                    *offset += 2;
+                }
+                OpCode::GetGlobal => {
+                    let idx = self.code[*offset + 1];
+                    let ident = &self.constants[idx as usize];
+                    println!("{op:<16} {ident:>4}");
                     *offset += 2;
                 }
                 _ => {
@@ -229,7 +238,13 @@ impl Display for Chunk {
                     OpCode::DefineGlobal => {
                         let idx = self.code[offset + 1];
                         let ident = &self.constants[idx as usize];
-                        writeln!(f, "{op} [{idx}] {ident}")?;
+                        writeln!(f, "{op} {ident}")?;
+                        offset += 2;
+                    }
+                    OpCode::GetGlobal => {
+                        let idx = self.code[offset + 1];
+                        let ident = &self.constants[idx as usize];
+                        writeln!(f, "{op} {ident}")?;
                         offset += 2;
                     }
                     _ => {

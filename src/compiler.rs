@@ -310,8 +310,7 @@ impl<'src> Compiler<'src> {
 
     /// Returns an index of the pushed constant.
     fn push_constant(&mut self, val: Value) -> u8 {
-        let idx = self.chunk.push_constant(val);
-        idx
+        self.chunk.push_constant(val)
     }
 
     fn emit_constant(&mut self, val: Value) {
@@ -336,6 +335,15 @@ impl<'src> Compiler<'src> {
                     self.emit_constant(Value::Obj(Obj::String(s.to_owned())));
                 }
             },
+            TokenKind::Ident => {
+                if self.in_global_scope {
+                    self.emit(OpCode::GetGlobal);
+                    let idx = self.push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                    self.emit(idx);
+                } else {
+                    todo!()
+                }
+            }
             TokenKind::Keyword(keyword) => match keyword {
                 Keyword::True => self.emit(OpCode::True),
                 Keyword::False => self.emit(OpCode::False),
@@ -1447,12 +1455,12 @@ mod tests {
     }
 
     #[test]
-    fn var_declaration_with_init_value() {
+    fn global_var_declaration_with_init_value() {
         let src = r#"var x = 1.0;"#;
         let chunk = compile(src).unwrap();
         let expected = r#"
 0000 1 OP_CONSTANT [0] 1.0
-0002 | OP_DEFINE_GLOBAL [1] "x"
+0002 | OP_DEFINE_GLOBAL "x"
 "#
         .strip_prefix("\n")
         .unwrap();
@@ -1460,12 +1468,30 @@ mod tests {
     }
 
     #[test]
-    fn var_declaration_without_init_value() {
+    fn global_var_declaration_without_init_value() {
         let src = r#"var x;"#;
         let chunk = compile(src).unwrap();
         let expected = r#"
 0000 1 OP_NIL
-0001 | OP_DEFINE_GLOBAL [0] "x"
+0001 | OP_DEFINE_GLOBAL "x"
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(format!("{}", chunk), expected);
+    }
+
+    #[test]
+    fn global_var_read() {
+        let src = r#"
+var x;
+print x;
+"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 2 OP_NIL
+0001 | OP_DEFINE_GLOBAL "x"
+0003 3 OP_GET_GLOBAL "x"
+0005 | OP_PRINT
 "#
         .strip_prefix("\n")
         .unwrap();

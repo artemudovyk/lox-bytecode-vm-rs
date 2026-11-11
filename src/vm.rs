@@ -253,6 +253,9 @@ impl<W: Write, E: Write> Vm<W, E> {
                         self.globals.insert(ident, value);
                         self.move_cursor();
                     }
+                    OpCode::GetGlobal => {
+                        todo!()
+                    }
                 }
             }
 
@@ -386,4 +389,16 @@ print 2 + 3 * 4;
         let _ = vm.interpret(src);
         assert_eq!(vm.globals.get("x"), Some(&Value::Number(1.0)));
     }
+
+    //     #[test]
+    //     fn global_variable_can_be_accessed_at_runtime() {
+    //         let src = r#"
+    // var x = 1.0;
+    // print x;"#;
+    //         let mut buf: Vec<u8> = Vec::new();
+    //         let mut vm = Vm::with_writers(&mut buf, io::stderr());
+    //         vm.tracing = true;
+    //         let _ = vm.interpret(src);
+    //         assert_eq!(std::str::from_utf8(&buf).unwrap(), "1.0\n");
+    //     }
 }
