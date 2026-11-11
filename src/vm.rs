@@ -61,7 +61,7 @@ impl<W: Write, E: Write> Vm<W, E> {
         Ok(())
     }
 
-    fn interpret_chunk(&mut self, chunk: Chunk) -> Result<(), VmError> {
+    fn interpret_chunk(&mut self, mut chunk: Chunk) -> Result<(), VmError> {
         if chunk.code.is_empty() {
             todo!("Return error that the chunk bytecode vec is empty");
         }
@@ -254,7 +254,21 @@ impl<W: Write, E: Write> Vm<W, E> {
                         self.move_cursor();
                     }
                     OpCode::GetGlobal => {
-                        todo!()
+                        self.move_cursor();
+                        let Value::Obj(Obj::String(ident)) =
+                            chunk.constants[*self.cursor as usize].clone()
+                        else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "Unexpected identifier type".to_owned(),
+                            )));
+                        };
+                        let Some(value) = self.globals.get(&ident) else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No global variable with this identifier.".to_owned(),
+                            )));
+                        };
+                        self.stack.push(value.clone());
+                        self.move_cursor();
                     }
                 }
             }
@@ -390,15 +404,16 @@ print 2 + 3 * 4;
         assert_eq!(vm.globals.get("x"), Some(&Value::Number(1.0)));
     }
 
-    //     #[test]
-    //     fn global_variable_can_be_accessed_at_runtime() {
-    //         let src = r#"
-    // var x = 1.0;
-    // print x;"#;
-    //         let mut buf: Vec<u8> = Vec::new();
-    //         let mut vm = Vm::with_writers(&mut buf, io::stderr());
-    //         vm.tracing = true;
-    //         let _ = vm.interpret(src);
-    //         assert_eq!(std::str::from_utf8(&buf).unwrap(), "1.0\n");
-    //     }
+    #[test]
+    fn global_variable_can_be_accessed_at_runtime() {
+        let src = r#"
+var x = 1.0;
+print x;
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.enable_tracing();
+        let _ = vm.interpret(src);
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "1.0\n");
+    }
 }
