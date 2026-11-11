@@ -61,7 +61,7 @@ impl<W: Write, E: Write> Vm<W, E> {
         Ok(())
     }
 
-    fn interpret_chunk(&mut self, mut chunk: Chunk) -> Result<(), VmError> {
+    fn interpret_chunk(&mut self, chunk: Chunk) -> Result<(), VmError> {
         if chunk.code.is_empty() {
             todo!("Return error that the chunk bytecode vec is empty");
         }
@@ -415,5 +415,22 @@ print x;
         vm.enable_tracing();
         let _ = vm.interpret(src);
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "1.0\n");
+    }
+
+    #[test]
+    fn global_variable_with_string_value_can_be_accessed_at_runtime() {
+        let src = r#"
+var beverage = "cafe au lait";
+var breakfast = "beignets with " + beverage;
+print breakfast;
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.enable_tracing();
+        let _ = vm.interpret(src);
+        assert_eq!(
+            std::str::from_utf8(&buf).unwrap(),
+            "\"beignets with cafe au lait\"\n"
+        );
     }
 }
