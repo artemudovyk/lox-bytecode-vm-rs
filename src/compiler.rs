@@ -337,9 +337,19 @@ impl<'src> Compiler<'src> {
             },
             TokenKind::Ident => {
                 if self.in_global_scope {
-                    self.emit(OpCode::GetGlobal);
-                    let idx = self.push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
-                    self.emit(idx);
+                    if matches!(self.lexer.peek().kind, TokenKind::Eq) {
+                        self.lexer.advance(); // Consume `=`
+                        self.emit_expr(0)?;
+                        self.emit(OpCode::SetGlobal);
+                        let idx =
+                            self.push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                        self.emit(idx);
+                    } else {
+                        self.emit(OpCode::GetGlobal);
+                        let idx =
+                            self.push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                        self.emit(idx);
+                    }
                 } else {
                     todo!()
                 }
@@ -1492,6 +1502,25 @@ print x;
 0001 | OP_DEFINE_GLOBAL "x"
 0003 3 OP_GET_GLOBAL "x"
 0005 | OP_PRINT
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        assert_eq!(format!("{}", chunk), expected);
+    }
+
+    #[test]
+    fn global_var_assignment() {
+        let src = r#"
+var x;
+x = 1;
+"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 2 OP_NIL
+0001 | OP_DEFINE_GLOBAL "x"
+0003 3 OP_CONSTANT [1] 1.0
+0005 | OP_SET_GLOBAL "x"
+0007 | OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();

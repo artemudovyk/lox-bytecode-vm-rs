@@ -93,7 +93,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                         self.move_cursor();
                         self.stack
                             .push(chunk.constants[*self.cursor as usize].clone());
-                        self.move_cursor();
                     }
                     OpCode::True => self.stack.push(Value::Bool(true)),
                     OpCode::False => self.stack.push(Value::Bool(false)),
@@ -108,7 +107,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             }
                         };
                         self.stack.push(val);
-                        self.move_cursor();
                     }
                     OpCode::Add => {
                         // NOTE: we pop values in a backwards order, so we assign the first pop to
@@ -124,7 +122,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push((v1 + v2)?);
-                        self.move_cursor();
                     }
                     OpCode::Sub => {
                         let Some(v2) = self.stack.pop() else {
@@ -138,7 +135,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push((v1 - v2)?);
-                        self.move_cursor();
                     }
                     OpCode::Mult => {
                         let Some(v2) = self.stack.pop() else {
@@ -152,7 +148,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push((v1 * v2)?);
-                        self.move_cursor();
                     }
                     OpCode::Div => {
                         let Some(v2) = self.stack.pop() else {
@@ -166,7 +161,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push((v1 / v2)?);
-                        self.move_cursor();
                     }
                     OpCode::Not => {
                         let Some(v) = self.stack.pop() else {
@@ -175,7 +169,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(!v);
-                        self.move_cursor();
                     }
                     OpCode::Equal => {
                         let Some(v2) = self.stack.pop() else {
@@ -189,7 +182,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(Value::Bool(v1 == v2));
-                        self.move_cursor();
                     }
                     OpCode::Greater => {
                         let Some(v2) = self.stack.pop() else {
@@ -203,7 +195,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(Value::Bool(v1 > v2));
-                        self.move_cursor();
                     }
                     OpCode::Less => {
                         let Some(v2) = self.stack.pop() else {
@@ -217,7 +208,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(Value::Bool(v1 < v2));
-                        self.move_cursor();
                     }
                     OpCode::Return => {
                         match self.stack.pop() {
@@ -227,10 +217,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                         return Ok(());
                     }
                     OpCode::Print => match self.stack.pop() {
-                        Some(v) => {
-                            writeln!(self.writer, "{}", v)?;
-                            self.move_cursor()
-                        }
+                        Some(v) => writeln!(self.writer, "{}", v)?,
                         None => writeln!(self.error_writer, "Nothing on the stack.")?,
                     },
                     OpCode::Pop => {
@@ -251,7 +238,6 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.globals.insert(ident, value);
-                        self.move_cursor();
                     }
                     OpCode::GetGlobal => {
                         self.move_cursor();
@@ -268,9 +254,32 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(value.clone());
+                    }
+                    OpCode::SetGlobal => {
                         self.move_cursor();
+                        let Value::Obj(Obj::String(ident)) =
+                            chunk.constants[*self.cursor as usize].clone()
+                        else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "Unexpected identifier type".to_owned(),
+                            )));
+                        };
+                        let Some(value) = dbg!(self.stack.last()) else {
+                            return Err(VmError::RuntimeError(RuntimeError::Other(
+                                "No value on the stack".to_owned(),
+                            )));
+                        };
+                        match self.globals.insert(ident, value.clone()) {
+                            Some(_) => {}
+                            None => {
+                                return Err(VmError::RuntimeError(RuntimeError::Other(
+                                    "Assigning an unknown variable.".to_owned(),
+                                )));
+                            }
+                        }
                     }
                 }
+                self.move_cursor();
             }
 
             Ok(())
@@ -432,5 +441,19 @@ print breakfast;
             std::str::from_utf8(&buf).unwrap(),
             "\"beignets with cafe au lait\"\n"
         );
+    }
+
+    #[test]
+    fn global_variable_assignment() {
+        let src = r#"
+var x;
+x = 42;
+print x;
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.enable_tracing();
+        let _ = vm.interpret(src);
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "42.0\n");
     }
 }

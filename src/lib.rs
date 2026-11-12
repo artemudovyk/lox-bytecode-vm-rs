@@ -29,6 +29,7 @@ pub enum OpCode {
     Pop,
     DefineGlobal,
     GetGlobal,
+    SetGlobal,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -54,6 +55,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::Pop as u8 => Ok(OpCode::Pop),
             x if x == OpCode::DefineGlobal as u8 => Ok(OpCode::DefineGlobal),
             x if x == OpCode::GetGlobal as u8 => Ok(OpCode::GetGlobal),
+            x if x == OpCode::SetGlobal as u8 => Ok(OpCode::SetGlobal),
             _ => Err(()),
         }
     }
@@ -86,6 +88,7 @@ impl Display for OpCode {
             Self::Pop => write!(f, "OP_POP"),
             Self::DefineGlobal => write!(f, "OP_DEFINE_GLOBAL"),
             Self::GetGlobal => write!(f, "OP_GET_GLOBAL"),
+            Self::SetGlobal => write!(f, "OP_SET_GLOBAL"),
         }
     }
 }
@@ -182,13 +185,7 @@ impl Chunk {
                     println!("{op:<16} [{idx}] {val:>4}");
                     *offset += 2;
                 }
-                OpCode::DefineGlobal => {
-                    let idx = self.code[*offset + 1];
-                    let ident = &self.constants[idx as usize];
-                    println!("{op:<16} {ident:>4}");
-                    *offset += 2;
-                }
-                OpCode::GetGlobal => {
+                OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => {
                     let idx = self.code[*offset + 1];
                     let ident = &self.constants[idx as usize];
                     println!("{op:<16} {ident:>4}");
@@ -235,13 +232,7 @@ impl Display for Chunk {
                         writeln!(f, "{op} [{idx}] {val}")?;
                         offset += 2;
                     }
-                    OpCode::DefineGlobal => {
-                        let idx = self.code[offset + 1];
-                        let ident = &self.constants[idx as usize];
-                        writeln!(f, "{op} {ident}")?;
-                        offset += 2;
-                    }
-                    OpCode::GetGlobal => {
+                    OpCode::DefineGlobal | OpCode::GetGlobal | OpCode::SetGlobal => {
                         let idx = self.code[offset + 1];
                         let ident = &self.constants[idx as usize];
                         writeln!(f, "{op} {ident}")?;
