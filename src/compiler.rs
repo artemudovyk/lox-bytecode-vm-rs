@@ -10,6 +10,17 @@ pub fn compile(src: &str) -> Result<Chunk, Vec<CompileError>> {
     Ok(compiler.chunk)
 }
 
+struct Local<'src> {
+    name: &'src str,
+    depth: usize,
+}
+
+impl<'src> Local<'src> {
+    fn new(name: &'src str, depth: usize) -> Self {
+        Self { name, depth }
+    }
+}
+
 #[allow(dead_code)]
 pub struct Compiler<'src> {
     chunk: Chunk,
@@ -18,7 +29,10 @@ pub struct Compiler<'src> {
     cur_func: Option<&'src str>,
     panic_mode: bool,
     errors: Vec<CompileError>,
-    in_global_scope: bool,
+    /// `0` represents global scope. Everything else - local.
+    scope_depth: usize,
+    locals: Vec<Local<'src>>,
+    locals_count: usize,
 }
 
 #[allow(dead_code)]
@@ -31,7 +45,9 @@ impl<'src> Compiler<'src> {
             cur_func: None,
             panic_mode: false,
             errors: Vec::new(),
-            in_global_scope: true,
+            scope_depth: 0,
+            locals: Vec::new(),
+            locals_count: 0,
         }
     }
 
@@ -107,15 +123,42 @@ impl<'src> Compiler<'src> {
                         TokenKind::Semicolon,
                         "Expect ';' at the end of a variable declaration.",
                     )?;
-                    if self.in_global_scope {
+                    if self.scope_depth == 0 {
                         self.emit(OpCode::DefineGlobal);
                         let idx =
                             self.push_constant(Value::Obj(Obj::String(ident.lexeme.to_owned())));
                         self.emit(idx);
                     } else {
-                        todo!("Define variable in non-global scope");
+                        self.add_local(ident.lexeme)?;
                     }
                     return Ok(Some(true));
+                }
+                TokenKind::Keyword(keyword) => match keyword {
+                    Keyword::Return => {
+                        self.lexer.advance();
+                        match self.lexer.peek().kind {
+                            TokenKind::Semicolon => {
+                                self.lexer.advance();
+                                self.emit(OpCode::Return);
+                                return Ok(Some(false));
+                            }
+                            _ => {
+                                self.emit_expr(0)?;
+                                self.expect_token(
+                                    TokenKind::Semicolon,
+                                    "Expect ';' at the end of the return statement.",
+                                )?;
+                                self.emit(OpCode::Return);
+                                return Ok(Some(false));
+                            }
+                        }
+                    }
+                    _ => todo!("Unhandled keyword while parsing next statement."),
+                },
+                TokenKind::LeftBrace => {
+                    self.lexer.advance();
+                    self.emit_block()?;
+                    // return Ok(Some(Stmt::Block(self.parse_block()?)));
                 }
                 // TokenKind::Keyword(Keyword::If) => {
                 //     self.lexer.advance();
@@ -258,33 +301,7 @@ impl<'src> Compiler<'src> {
                 //         superclass,
                 //     }));
                 // }
-                TokenKind::Keyword(keyword) => match keyword {
-                    Keyword::Return => {
-                        self.lexer.advance();
-                        match self.lexer.peek().kind {
-                            TokenKind::Semicolon => {
-                                self.lexer.advance();
-                                self.emit(OpCode::Return);
-                                return Ok(Some(false));
-                            }
-                            _ => {
-                                self.emit_expr(0)?;
-                                self.expect_token(
-                                    TokenKind::Semicolon,
-                                    "Expect ';' at the end of the return statement.",
-                                )?;
-                                self.emit(OpCode::Return);
-                                return Ok(Some(false));
-                            }
-                        }
-                    }
-                    _ => todo!("Unhandled keyword while parsing next statement."),
-                },
-                // TokenKind::LeftBrace => {
-                //     self.lexer.advance();
-                //     return Ok(Some(Stmt::Block(self.parse_block()?)));
-                // }
-                // // Consume and ignore comments
+                // Consume and ignore comments
                 TokenKind::Comment => {
                     self.lexer.advance();
                     continue;
@@ -336,22 +353,49 @@ impl<'src> Compiler<'src> {
                 }
             },
             TokenKind::Ident => {
-                if self.in_global_scope {
-                    if matches!(self.lexer.peek().kind, TokenKind::Eq) {
-                        self.lexer.advance(); // Consume `=`
-                        self.emit_expr(0)?;
-                        self.emit(OpCode::SetGlobal);
-                        let idx =
-                            self.push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
-                        self.emit(idx);
-                    } else {
-                        self.emit(OpCode::GetGlobal);
-                        let idx =
-                            self.push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
-                        self.emit(idx);
+                // Check whether we are in global or local scope.
+                if self.scope_depth == 0 {
+                    match self.lexer.peek().kind {
+                        TokenKind::Eq => {
+                            self.lexer.advance(); // Consume `=`
+                            self.emit_expr(0)?;
+                            self.emit(OpCode::SetGlobal);
+                            // PERF: wastes space if variable name already in the constant vec
+                            let idx = self
+                                .push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                            self.emit(idx);
+                        }
+                        TokenKind::Semicolon => {
+                            self.emit(OpCode::Nil);
+                            self.emit(OpCode::SetGlobal);
+                            // PERF: wastes space if variable name already in the constant vec
+                            let idx = self
+                                .push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                            self.emit(idx);
+                            self.lexer.advance();
+                        }
+                        _ => {
+                            self.emit(dbg!(OpCode::GetGlobal));
+                            // PERF: wastes space if variable name already in the constant vec
+                            let idx = self
+                                .push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                            self.emit(dbg!(idx));
+                        }
                     }
                 } else {
-                    todo!()
+                    match self.lexer.peek().kind {
+                        TokenKind::Eq => {
+                            self.lexer.advance(); // consume `=`
+                            self.emit_expr(0)?;
+                            self.add_local(token.lexeme)?;
+                        }
+                        TokenKind::Semicolon => {
+                            self.emit(OpCode::Nil);
+                            self.add_local(token.lexeme)?;
+                            self.lexer.advance();
+                        }
+                        _ => todo!("Get local"),
+                    }
                 }
             }
             TokenKind::Keyword(keyword) => match keyword {
@@ -539,6 +583,75 @@ impl<'src> Compiler<'src> {
 
             break;
         }
+
+        Ok(())
+    }
+
+    fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        self.scope_depth -= 1;
+
+        while self.locals.pop_if(|v| v.depth > self.scope_depth).is_some() {
+            self.emit(OpCode::Pop);
+        }
+    }
+
+    fn emit_block(&mut self) -> Result<(), CompileError> {
+        self.begin_scope();
+        loop {
+            match self.lexer.peek().kind {
+                TokenKind::RightBrace | TokenKind::Eof => {
+                    break;
+                }
+                TokenKind::Comment => {
+                    self.lexer.advance();
+                }
+                // Treat all identifiers in the block as function declarations if we are inside the
+                // class declaration.
+                // TokenKind::Ident if self.in_class.in_scope() && self.cur_func.is_none() => {
+                //     statements.push(self.parse_function()?)
+                // }
+                // _ => statements.push(
+                //     self.next_stmt()?
+                //         .expect("Statement is expected at this point"),
+                // ),
+                // _ => todo!("Unhandled token kind while parsing block."),
+                _ => {
+                    self.next_stmt()?;
+                }
+            }
+        }
+        self.expect_token(TokenKind::RightBrace, "Expect '}' at the end of the block.")?;
+        self.end_scope();
+        Ok(())
+    }
+
+    fn add_local(&mut self, name: &'src str) -> Result<(), CompileError> {
+        if self.locals.len() >= 256 {
+            return Err(self.new_compile_error(CompileErrorKind::TooManyLocals));
+        }
+        if self
+            .locals
+            .iter()
+            // Go backward and check all locals for up to scope of the potential local as all locals
+            // in the vec are in order.
+            .rev()
+            .take_while(|v| v.depth >= self.scope_depth)
+            .any(|local| local.name == name && local.depth == self.scope_depth)
+        {
+            return Err(self.new_compile_error(CompileErrorKind::LocalRedeclarationsNotAllowed));
+        }
+
+        self.locals.push(Local {
+            name,
+            depth: self.scope_depth,
+        });
+        //
+        self.emit(OpCode::SetLocal);
+        self.emit((self.locals.len() - 1) as u8);
 
         Ok(())
     }
@@ -1118,6 +1231,10 @@ pub enum CompileErrorKind {
     SuperOutsideClassNotAllowed,
     #[error("'super' must be followed by get expression.")]
     SuperMustBeFollowedByGetExpression,
+    #[error("Too many local variables.")]
+    TooManyLocals,
+    #[error("Redeclaration of local variables are not allowed.")]
+    LocalRedeclarationsNotAllowed,
 }
 
 // #[derive(Debug, thiserror::Error)]
@@ -1524,6 +1641,29 @@ x = 1;
 "#
         .strip_prefix("\n")
         .unwrap();
+        assert_eq!(format!("{}", chunk), expected);
+    }
+
+    #[test]
+    fn block_with_local() {
+        let src = r#"
+var outer;
+
+{
+    var inner;
+}
+"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 2 OP_NIL
+0001 | OP_DEFINE_GLOBAL "outer"
+0003 5 OP_NIL
+0004 | OP_SET_LOCAL [0]
+0006 6 OP_POP
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        dbg!(&chunk);
         assert_eq!(format!("{}", chunk), expected);
     }
 }

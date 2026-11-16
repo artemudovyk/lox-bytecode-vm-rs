@@ -278,6 +278,12 @@ impl<W: Write, E: Write> Vm<W, E> {
                             }
                         }
                     }
+                    OpCode::GetLocal => {
+                        todo!();
+                    }
+                    OpCode::SetLocal => {
+                        todo!();
+                    }
                 }
                 self.move_cursor();
             }

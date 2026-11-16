@@ -30,6 +30,8 @@ pub enum OpCode {
     DefineGlobal,
     GetGlobal,
     SetGlobal,
+    GetLocal,
+    SetLocal,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -56,6 +58,8 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::DefineGlobal as u8 => Ok(OpCode::DefineGlobal),
             x if x == OpCode::GetGlobal as u8 => Ok(OpCode::GetGlobal),
             x if x == OpCode::SetGlobal as u8 => Ok(OpCode::SetGlobal),
+            x if x == OpCode::GetLocal as u8 => Ok(OpCode::GetLocal),
+            x if x == OpCode::SetLocal as u8 => Ok(OpCode::SetLocal),
             _ => Err(()),
         }
     }
@@ -89,6 +93,8 @@ impl Display for OpCode {
             Self::DefineGlobal => write!(f, "OP_DEFINE_GLOBAL"),
             Self::GetGlobal => write!(f, "OP_GET_GLOBAL"),
             Self::SetGlobal => write!(f, "OP_SET_GLOBAL"),
+            Self::GetLocal => write!(f, "OP_GET_LOCAL"),
+            Self::SetLocal => write!(f, "OP_SET_LOCAL"),
         }
     }
 }
@@ -191,6 +197,11 @@ impl Chunk {
                     println!("{op:<16} {ident:>4}");
                     *offset += 2;
                 }
+                OpCode::GetLocal | OpCode::SetLocal => {
+                    let local_slot = self.code[*offset + 1];
+                    println!("{op:<16} [{local_slot}]");
+                    *offset += 2;
+                }
                 _ => {
                     println!("{op}");
                     *offset += 1;
@@ -224,8 +235,8 @@ impl Display for Chunk {
                 write!(f, "{line} ")?;
             }
 
-            match OpCode::try_from(self.code[offset]) {
-                Ok(op) => match op {
+            match OpCode::try_from(dbg!(self.code[dbg!(offset)])) {
+                Ok(op) => match dbg!(&op) {
                     OpCode::Constant => {
                         let idx = self.code[offset + 1];
                         let val = &self.constants[idx as usize];
@@ -236,6 +247,11 @@ impl Display for Chunk {
                         let idx = self.code[offset + 1];
                         let ident = &self.constants[idx as usize];
                         writeln!(f, "{op} {ident}")?;
+                        offset += 2;
+                    }
+                    OpCode::GetLocal | OpCode::SetLocal => {
+                        let local_slot = dbg!(self.code[dbg!(offset) + 1]);
+                        writeln!(f, "{op} [{local_slot}]")?;
                         offset += 2;
                     }
                     _ => {
