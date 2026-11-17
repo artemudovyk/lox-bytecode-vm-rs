@@ -503,4 +503,22 @@ var a = 0;
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "\"inner\"\n\"outer\"\n");
     }
+
+    #[test]
+    fn local_var_shadowing_with_its_outer_value_as_initializer() {
+        let src = r#"
+{
+  var a = "outer";
+  {
+    var a = a;
+    print a;
+  }
+}
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.enable_tracing();
+        vm.interpret(src).unwrap();
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "\"outer\"\n");
+    }
 }
