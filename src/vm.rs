@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     Chunk, OpCode,
-    compiler::{CompileError, compile},
+    compiler::{CompileError, Local, compile},
     value::{Obj, Value},
 };
 
@@ -257,19 +257,17 @@ impl<W: Write, E: Write> Vm<W, E> {
                     }
                     OpCode::SetGlobal => {
                         self.move_cursor();
-                        let Value::Obj(Obj::String(ident)) =
-                            chunk.constants[*self.cursor as usize].clone()
+                        let &Value::Obj(Obj::String(ref ident)) =
+                            &chunk.constants[*self.cursor as usize]
                         else {
                             return Err(VmError::RuntimeError(RuntimeError::Other(
                                 "Unexpected identifier type".to_owned(),
                             )));
                         };
                         let Some(value) = dbg!(self.stack.last()) else {
-                            return Err(VmError::RuntimeError(RuntimeError::Other(
-                                "No value on the stack".to_owned(),
-                            )));
+                            return Err(VmError::RuntimeError(RuntimeError::StackEmpty));
                         };
-                        match self.globals.insert(ident, value.clone()) {
+                        match self.globals.insert(ident.clone(), value.clone()) {
                             Some(_) => {}
                             None => {
                                 return Err(VmError::RuntimeError(RuntimeError::Other(
@@ -279,10 +277,16 @@ impl<W: Write, E: Write> Vm<W, E> {
                         }
                     }
                     OpCode::GetLocal => {
-                        todo!();
+                        self.move_cursor();
+                        let local = &self.stack[*self.cursor as usize];
+                        self.stack.push(local.clone());
                     }
                     OpCode::SetLocal => {
-                        todo!();
+                        self.move_cursor();
+                        let Some(val) = self.stack.last() else {
+                            return Err(VmError::RuntimeError(RuntimeError::StackEmpty));
+                        };
+                        self.stack[*self.cursor as usize] = val.clone();
                     }
                 }
                 self.move_cursor();
@@ -326,6 +330,8 @@ pub enum RuntimeError {
     UnsupportedOperands,
     #[error(transparent)]
     IoError(#[from] io::Error),
+    #[error("Stack is empty.")]
+    StackEmpty,
     #[error("{0}")]
     Other(String),
 }
@@ -461,5 +467,40 @@ print x;
         vm.enable_tracing();
         let _ = vm.interpret(src);
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "42.0\n");
+    }
+
+    #[test]
+    fn local_variable_read() {
+        let src = r#"
+var a = 0;
+{
+    var a = 1;
+    print a;
+}
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.enable_tracing();
+        vm.interpret(src).unwrap();
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "1.0\n");
+    }
+
+    #[test]
+    fn local_var_shadowing() {
+        let src = r#"
+{
+  var a = "outer";
+  {
+    var a = "inner";
+    print a;
+  }
+  print a;
+}
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.enable_tracing();
+        vm.interpret(src).unwrap();
+        assert_eq!(std::str::from_utf8(&buf).unwrap(), "\"inner\"\n\"outer\"\n");
     }
 }

@@ -10,7 +10,7 @@ pub fn compile(src: &str) -> Result<Chunk, Vec<CompileError>> {
     Ok(compiler.chunk)
 }
 
-struct Local<'src> {
+pub(crate) struct Local<'src> {
     name: &'src str,
     depth: usize,
 }
@@ -97,6 +97,7 @@ impl<'src> Compiler<'src> {
     /// Returns Ok(None) when reached end of file.
     pub fn next_stmt(&mut self) -> Result<Option<bool>, CompileError> {
         loop {
+            let peeked = self.lexer.peek();
             match &self.lexer.peek().kind {
                 TokenKind::Keyword(Keyword::Print) => {
                     self.lexer.advance(); // Consume `print` keyword
@@ -129,7 +130,7 @@ impl<'src> Compiler<'src> {
                             self.push_constant(Value::Obj(Obj::String(ident.lexeme.to_owned())));
                         self.emit(idx);
                     } else {
-                        self.add_local(ident.lexeme)?;
+                        self.set_local(ident.lexeme)?;
                     }
                     return Ok(Some(true));
                 }
@@ -365,15 +366,6 @@ impl<'src> Compiler<'src> {
                                 .push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
                             self.emit(idx);
                         }
-                        TokenKind::Semicolon => {
-                            self.emit(OpCode::Nil);
-                            self.emit(OpCode::SetGlobal);
-                            // PERF: wastes space if variable name already in the constant vec
-                            let idx = self
-                                .push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
-                            self.emit(idx);
-                            self.lexer.advance();
-                        }
                         _ => {
                             self.emit(dbg!(OpCode::GetGlobal));
                             // PERF: wastes space if variable name already in the constant vec
@@ -387,16 +379,63 @@ impl<'src> Compiler<'src> {
                         TokenKind::Eq => {
                             self.lexer.advance(); // consume `=`
                             self.emit_expr(0)?;
-                            self.add_local(token.lexeme)?;
+                            self.set_local(token.lexeme)?;
                         }
-                        TokenKind::Semicolon => {
-                            self.emit(OpCode::Nil);
-                            self.add_local(token.lexeme)?;
-                            self.lexer.advance();
+                        _ => {
+                            self.emit(OpCode::GetLocal);
+                            let Some(idx) = self.resolve_local(token.lexeme) else {
+                                return Err(
+                                    self.new_compile_error(CompileErrorKind::UndeclaredLocal)
+                                );
+                            };
+                            self.emit(idx);
                         }
-                        _ => todo!("Get local"),
                     }
                 }
+
+                // if self.scope_depth == 0 {
+                //     match self.lexer.peek().kind {
+                //         TokenKind::Eq => {
+                //             self.lexer.advance(); // Consume `=`
+                //             self.emit_expr(0)?;
+                //             self.emit(OpCode::SetGlobal);
+                //             // PERF: wastes space if variable name already in the constant vec
+                //             let idx = self
+                //                 .push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                //             self.emit(idx);
+                //         }
+                //         TokenKind::Semicolon => {
+                //             self.emit(OpCode::Nil);
+                //             self.emit(OpCode::SetGlobal);
+                //             // PERF: wastes space if variable name already in the constant vec
+                //             let idx = self
+                //                 .push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                //             self.emit(idx);
+                //             self.lexer.advance();
+                //         }
+                //         _ => {
+                //             self.emit(dbg!(OpCode::GetGlobal));
+                //             // PERF: wastes space if variable name already in the constant vec
+                //             let idx = self
+                //                 .push_constant(Value::Obj(Obj::String(token.lexeme.to_owned())));
+                //             self.emit(dbg!(idx));
+                //         }
+                //     }
+                // } else {
+                //     match self.lexer.peek().kind {
+                //         TokenKind::Eq => {
+                //             self.lexer.advance(); // consume `=`
+                //             self.emit_expr(0)?;
+                //             self.add_local(token.lexeme)?;
+                //         }
+                //         TokenKind::Semicolon => {
+                //             self.emit(OpCode::Nil);
+                //             self.add_local(token.lexeme)?;
+                //             self.lexer.advance();
+                //         }
+                //         _ => todo!("Get local"),
+                //     }
+                // }
             }
             TokenKind::Keyword(keyword) => match keyword {
                 Keyword::True => self.emit(OpCode::True),
@@ -602,12 +641,19 @@ impl<'src> Compiler<'src> {
     fn emit_block(&mut self) -> Result<(), CompileError> {
         self.begin_scope();
         loop {
+            let peeked = self.lexer.peek();
             match self.lexer.peek().kind {
                 TokenKind::RightBrace | TokenKind::Eof => {
                     break;
                 }
                 TokenKind::Comment => {
                     self.lexer.advance();
+                }
+                // Handle nested blocks. If we do not handle it here, we'll return back to
+                // next_stmt() loop and the closing brace `}` would not be handled properly.
+                TokenKind::LeftBrace => {
+                    self.lexer.advance();
+                    self.emit_block()?;
                 }
                 // Treat all identifiers in the block as function declarations if we are inside the
                 // class declaration.
@@ -629,7 +675,7 @@ impl<'src> Compiler<'src> {
         Ok(())
     }
 
-    fn add_local(&mut self, name: &'src str) -> Result<(), CompileError> {
+    fn set_local(&mut self, name: &'src str) -> Result<(), CompileError> {
         if self.locals.len() >= 256 {
             return Err(self.new_compile_error(CompileErrorKind::TooManyLocals));
         }
@@ -654,6 +700,20 @@ impl<'src> Compiler<'src> {
         self.emit((self.locals.len() - 1) as u8);
 
         Ok(())
+    }
+
+    fn resolve_local(&self, name: &str) -> Option<u8> {
+        // TODO: use take_while()? Probably not.
+        // self.locals always have depth > 0, so we will not hit global scope, and we
+        // must follow all the way up the possible scope when resolving a local, so it
+        // should be correct to just go in reverse.
+        self.locals.iter().enumerate().rev().find_map(|(i, local)| {
+            if local.name == name {
+                Some(i as u8)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn expr_bp(&mut self, min_bp: u8) -> Result<Expr<'src>, CompileError> {
@@ -1235,6 +1295,8 @@ pub enum CompileErrorKind {
     TooManyLocals,
     #[error("Redeclaration of local variables are not allowed.")]
     LocalRedeclarationsNotAllowed,
+    #[error("Cannot use undeclared local.")]
+    UndeclaredLocal,
 }
 
 // #[derive(Debug, thiserror::Error)]
@@ -1645,21 +1707,44 @@ x = 1;
     }
 
     #[test]
-    fn block_with_local() {
+    fn local_variable() {
         let src = r#"
-var outer;
+var a;
 
 {
-    var inner;
+    var b;
 }
 "#;
         let chunk = compile(src).unwrap();
         let expected = r#"
 0000 2 OP_NIL
-0001 | OP_DEFINE_GLOBAL "outer"
+0001 | OP_DEFINE_GLOBAL "a"
 0003 5 OP_NIL
 0004 | OP_SET_LOCAL [0]
 0006 6 OP_POP
+"#
+        .strip_prefix("\n")
+        .unwrap();
+        dbg!(&chunk);
+        assert_eq!(format!("{}", chunk), expected);
+    }
+
+    #[test]
+    fn local_variable_with_initializer() {
+        let src = r#"
+var a;
+
+{
+    var b = 1;
+}
+"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 2 OP_NIL
+0001 | OP_DEFINE_GLOBAL "a"
+0003 5 OP_CONSTANT [1] 1.0
+0005 | OP_SET_LOCAL [0]
+0007 6 OP_POP
 "#
         .strip_prefix("\n")
         .unwrap();
