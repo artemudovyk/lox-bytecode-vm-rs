@@ -154,6 +154,63 @@ impl<'src> Compiler<'src> {
                             }
                         }
                     }
+                    Keyword::If => {
+                        self.lexer.advance();
+                        self.expect_token(TokenKind::LeftParen, "Expect '(' before if condition.")?;
+                        self.emit_expr(0)?;
+                        self.expect_token(TokenKind::RightParen, "Expect ')' after if condition.")?;
+                        self.emit(OpCode::JumpIfFalse);
+                        // 2-byte placeholder
+                        self.emit(0);
+                        self.emit(0);
+                        let jump_code_start = self.chunk.code.len() - 2;
+
+                        match self.lexer.peek().kind {
+                            TokenKind::LeftBrace => {
+                                // self.lexer.advance();
+                                // let statements = self.parse_block()?;
+                                // Box::new(Stmt::Block(statements))
+                                todo!("Handle if then block")
+                            }
+                            // _ => match self.next_stmt()? {
+                            //     Some(s) => Box::new(s),
+                            //     None => Err(CompileError::EmptyIfStatement {
+                            //         line: self.current_line(),
+                            //     })?,
+                            // },
+                            _ => {
+                                self.next_stmt()?;
+                                // Jump len value split by bytes
+                                let jump_len = self.chunk.code.len() - jump_code_start;
+                                if jump_len > u16::MAX as usize {
+                                    panic!("Can't jump that long.")
+                                }
+                                let [b1, b2] = (dbg!(jump_len) as u16).to_be_bytes();
+                                self.chunk.code[jump_code_start] = b1;
+                                self.chunk.code[jump_code_start + 1] = b2;
+                            }
+                        };
+                        // let else_stmt = match self.lexer.peek().kind {
+                        //     TokenKind::Keyword(Keyword::Else) => {
+                        //         self.lexer.advance();
+                        //         match self.lexer.peek().kind {
+                        //             TokenKind::LeftBrace => {
+                        //                 self.lexer.advance();
+                        //                 let statements = self.parse_block()?;
+                        //                 Some(Box::new(Stmt::Block(statements)))
+                        //             }
+                        //             _ => self.next_stmt()?.map(Box::new),
+                        //         }
+                        //     }
+                        //     _ => None,
+                        // };
+                        // return Ok(Some(Stmt::If {
+                        //     condition: cond,
+                        //     stmt,
+                        //     else_stmt,
+                        // }));
+                        return Ok(Some(true));
+                    }
                     _ => todo!("Unhandled keyword while parsing next statement."),
                 },
                 TokenKind::LeftBrace => {
@@ -165,44 +222,6 @@ impl<'src> Compiler<'src> {
                     self.end_scope();
                     self.lexer.advance();
                 }
-                // TokenKind::Keyword(Keyword::If) => {
-                //     self.lexer.advance();
-                //     self.expect_token(TokenKind::LeftParen, "Expect '('.")?;
-                //     let cond = self.next_expr()?;
-                //     self.expect_token(TokenKind::RightParen, "Expect ')'.")?;
-                //     let stmt = match self.lexer.peek().kind {
-                //         TokenKind::LeftBrace => {
-                //             self.lexer.advance();
-                //             let statements = self.parse_block()?;
-                //             Box::new(Stmt::Block(statements))
-                //         }
-                //         _ => match self.next_stmt()? {
-                //             Some(s) => Box::new(s),
-                //             None => Err(CompileError::EmptyIfStatement {
-                //                 line: self.current_line(),
-                //             })?,
-                //         },
-                //     };
-                //     let else_stmt = match self.lexer.peek().kind {
-                //         TokenKind::Keyword(Keyword::Else) => {
-                //             self.lexer.advance();
-                //             match self.lexer.peek().kind {
-                //                 TokenKind::LeftBrace => {
-                //                     self.lexer.advance();
-                //                     let statements = self.parse_block()?;
-                //                     Some(Box::new(Stmt::Block(statements)))
-                //                 }
-                //                 _ => self.next_stmt()?.map(Box::new),
-                //             }
-                //         }
-                //         _ => None,
-                //     };
-                //     return Ok(Some(Stmt::If {
-                //         condition: cond,
-                //         stmt,
-                //         else_stmt,
-                //     }));
-                // }
                 // TokenKind::Keyword(Keyword::While) => {
                 //     self.lexer.advance();
                 //     self.expect_token(TokenKind::LeftParen, "Expect '('.")?;
@@ -1725,6 +1744,21 @@ var a;
         .strip_prefix("\n")
         .unwrap();
         dbg!(&chunk);
+        assert_eq!(format!("{}", chunk), expected);
+    }
+
+    #[test]
+    fn if_stmt() {
+        let src = r#"if (true) print("condition was truthy");"#;
+        let chunk = compile(src).unwrap();
+        let expected = r#"
+0000 1 OP_TRUE
+0001 | OP_JUMP_IF_FALSE 5
+0004 | OP_CONSTANT [0] "condition was truthy"
+0006 | OP_PRINT
+"#
+        .strip_prefix("\n")
+        .unwrap();
         assert_eq!(format!("{}", chunk), expected);
     }
 }

@@ -288,6 +288,9 @@ impl<W: Write, E: Write> Vm<W, E> {
                         };
                         self.stack[*self.cursor as usize] = val.clone();
                     }
+                    OpCode::JumpIfFalse => {
+                        todo!("Handle OpCode::JumpIfFalse in VM");
+                    }
                 }
                 self.move_cursor();
             }
@@ -507,14 +510,14 @@ var a = 0;
     #[test]
     fn local_var_shadowing_with_its_outer_value_as_initializer() {
         let src = r#"
-{
-  var a = "outer";
-  {
-    var a = a;
-    print a;
-  }
-}
-"#;
+        {
+          var a = "outer";
+          {
+            var a = a;
+            print a;
+          }
+        }
+        "#;
         let mut buf: Vec<u8> = Vec::new();
         let mut vm = Vm::with_writers(&mut buf, io::stderr());
         vm.enable_tracing();
@@ -525,11 +528,11 @@ var a = 0;
     #[test]
     fn catches_local_var_read_in_its_own_initializer_if_its_not_defined_yet() {
         let src = r#"
-{
-  var a = a;
-  print a;
-}
-"#;
+        {
+          var a = a;
+          print a;
+        }
+        "#;
         let mut buf: Vec<u8> = Vec::new();
         let mut errbuf: Vec<u8> = Vec::new();
         let mut vm = Vm::with_writers(&mut buf, &mut errbuf);
@@ -540,4 +543,20 @@ var a = 0;
             "[line 3] Error at 'a': Cannot use undeclared local.\n[line 4] Error at 'a': Cannot use undeclared local.\n"
         );
     }
+
+    // #[test]
+    // fn if_without_else() {
+    //     let src = r#"
+    //     if (condition) print("condition was truthy");
+    //     "#;
+    //     let mut buf: Vec<u8> = Vec::new();
+    //     let mut errbuf: Vec<u8> = Vec::new();
+    //     let mut vm = Vm::with_writers(&mut buf, &mut errbuf);
+    //     vm.tracing = true;
+    //     let _ = vm.interpret(src);
+    //     assert_eq!(
+    //         std::str::from_utf8(&errbuf).unwrap(),
+    //         "[line 3] Error at 'a': Cannot use undeclared local.\n[line 4] Error at 'a': Cannot use undeclared local.\n"
+    //     );
+    // }
 }

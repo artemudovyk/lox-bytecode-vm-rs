@@ -32,6 +32,7 @@ pub enum OpCode {
     SetGlobal,
     GetLocal,
     SetLocal,
+    JumpIfFalse,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -60,6 +61,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::SetGlobal as u8 => Ok(OpCode::SetGlobal),
             x if x == OpCode::GetLocal as u8 => Ok(OpCode::GetLocal),
             x if x == OpCode::SetLocal as u8 => Ok(OpCode::SetLocal),
+            x if x == OpCode::JumpIfFalse as u8 => Ok(OpCode::JumpIfFalse),
             _ => Err(()),
         }
     }
@@ -95,6 +97,7 @@ impl Display for OpCode {
             Self::SetGlobal => write!(f, "OP_SET_GLOBAL"),
             Self::GetLocal => write!(f, "OP_GET_LOCAL"),
             Self::SetLocal => write!(f, "OP_SET_LOCAL"),
+            Self::JumpIfFalse => write!(f, "OP_JUMP_IF_FALSE"),
         }
     }
 }
@@ -202,6 +205,13 @@ impl Chunk {
                     println!("{op:<16} [{local_slot}]");
                     *offset += 2;
                 }
+                OpCode::JumpIfFalse => {
+                    let b1 = self.code[*offset + 1];
+                    let b2 = self.code[*offset + 2];
+                    let jump_count = u16::from_be_bytes([b1, b2]);
+                    println!("{op:<16} {jump_count}");
+                    *offset += 3;
+                }
                 _ => {
                     println!("{op}");
                     *offset += 1;
@@ -253,6 +263,13 @@ impl Display for Chunk {
                         let local_slot = dbg!(self.code[dbg!(offset) + 1]);
                         writeln!(f, "{op} [{local_slot}]")?;
                         offset += 2;
+                    }
+                    OpCode::JumpIfFalse => {
+                        let b1 = self.code[offset + 1];
+                        let b2 = self.code[offset + 2];
+                        let jump_count = u16::from_be_bytes([b1, b2]);
+                        writeln!(f, "{op:<16} {jump_count}")?;
+                        offset += 3;
                     }
                     _ => {
                         writeln!(f, "{op}")?;
