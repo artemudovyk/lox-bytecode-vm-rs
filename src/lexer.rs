@@ -220,8 +220,22 @@ impl<'src> Lexer<'src> {
     }
 
     pub fn next_token(&mut self) -> Token<'src> {
+        self.next_token_internal(false)
+    }
+
+    /// Peek into the next token. Peeked token is cached under the hood and will be returned in
+    /// `next_token()` call.
+    pub fn peek(&mut self) -> &Token<'src> {
+        if self.peeked.is_none() {
+            self.peeked = Some(self.next_token_internal(true));
+        }
+        self.peeked.as_ref().unwrap()
+    }
+
+    fn next_token_internal(&mut self, peeking: bool) -> Token<'src> {
         // Return a buffered token if present, otherwise continue with the regular execution
         if let Some(token) = self.peeked.take() {
+            self.prev_lexeme = Some(token.lexeme);
             return token;
         }
 
@@ -339,17 +353,10 @@ impl<'src> Lexer<'src> {
             self.cursor.line,
             col,
         );
-        self.prev_lexeme = Some(token.lexeme);
-        token
-    }
-
-    /// Peek into the next token. Peeked token is cached under the hood and will be returned in
-    /// `next_token()` call.
-    pub fn peek(&mut self) -> &Token<'src> {
-        if self.peeked.is_none() {
-            self.peeked = Some(self.next_token());
+        if !peeking {
+            self.prev_lexeme = Some(token.lexeme);
         }
-        self.peeked.as_ref().unwrap()
+        token
     }
 
     /// Convenience method around `next_token()` to consume the next token and advance cursor.

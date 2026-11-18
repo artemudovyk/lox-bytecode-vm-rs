@@ -395,7 +395,7 @@ print 2 + 3 * 4;
         let _ = vm.interpret(src);
         assert_eq!(
             std::str::from_utf8(&errbuf).unwrap(),
-            "[line 1] Error at '1': Expect ';' at the end of the expression statement.\n"
+            "[line 1] Error at '': Expect ';' at the end of the expression statement.\n"
         );
     }
 
@@ -411,7 +411,7 @@ print 2 + 3 * 4;
         let _ = vm.interpret(src);
         assert_eq!(
             std::str::from_utf8(&errbuf).unwrap(),
-            "[line 2] Error at ';': Expect ')' at the end of the grouping.\n[line 3] Error at '4': Expect ';' at the end of the expression statement.\n"
+            "[line 2] Error at ';': Expect ')' at the end of the grouping.\n[line 3] Error at '': Expect ';' at the end of the expression statement.\n"
         );
     }
 
@@ -520,5 +520,24 @@ var a = 0;
         vm.enable_tracing();
         vm.interpret(src).unwrap();
         assert_eq!(std::str::from_utf8(&buf).unwrap(), "\"outer\"\n");
+    }
+
+    #[test]
+    fn catches_local_var_read_in_its_own_initializer_if_its_not_defined_yet() {
+        let src = r#"
+{
+  var a = a;
+  print a;
+}
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut errbuf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, &mut errbuf);
+        vm.tracing = true;
+        let _ = vm.interpret(src);
+        assert_eq!(
+            std::str::from_utf8(&errbuf).unwrap(),
+            "[line 3] Error at 'a': Cannot use undeclared local.\n[line 4] Error at 'a': Cannot use undeclared local.\n"
+        );
     }
 }

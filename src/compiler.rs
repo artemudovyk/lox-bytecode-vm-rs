@@ -158,8 +158,12 @@ impl<'src> Compiler<'src> {
                 },
                 TokenKind::LeftBrace => {
                     self.lexer.advance();
-                    self.emit_block()?;
-                    // return Ok(Some(Stmt::Block(self.parse_block()?)));
+                    self.begin_scope();
+                    continue;
+                }
+                TokenKind::RightBrace => {
+                    self.end_scope();
+                    self.lexer.advance();
                 }
                 // TokenKind::Keyword(Keyword::If) => {
                 //     self.lexer.advance();
@@ -307,7 +311,14 @@ impl<'src> Compiler<'src> {
                     self.lexer.advance();
                     continue;
                 }
-                TokenKind::Eof => return Ok(None),
+                TokenKind::Eof => {
+                    if self.scope_depth > 0 {
+                        return Err(self.new_compile_error(CompileErrorKind::UnclosedBlock {
+                            line: self.current_line(),
+                        }));
+                    }
+                    return Ok(None);
+                }
                 // Fallback to expression statement;
                 _ => {
                     self.emit_expr(0)?;
@@ -638,43 +649,6 @@ impl<'src> Compiler<'src> {
         }
     }
 
-    fn emit_block(&mut self) -> Result<(), CompileError> {
-        self.begin_scope();
-        loop {
-            let peeked = self.lexer.peek();
-            match self.lexer.peek().kind {
-                TokenKind::RightBrace | TokenKind::Eof => {
-                    break;
-                }
-                TokenKind::Comment => {
-                    self.lexer.advance();
-                }
-                // Handle nested blocks. If we do not handle it here, we'll return back to
-                // next_stmt() loop and the closing brace `}` would not be handled properly.
-                TokenKind::LeftBrace => {
-                    self.lexer.advance();
-                    self.emit_block()?;
-                }
-                // Treat all identifiers in the block as function declarations if we are inside the
-                // class declaration.
-                // TokenKind::Ident if self.in_class.in_scope() && self.cur_func.is_none() => {
-                //     statements.push(self.parse_function()?)
-                // }
-                // _ => statements.push(
-                //     self.next_stmt()?
-                //         .expect("Statement is expected at this point"),
-                // ),
-                // _ => todo!("Unhandled token kind while parsing block."),
-                _ => {
-                    self.next_stmt()?;
-                }
-            }
-        }
-        self.expect_token(TokenKind::RightBrace, "Expect '}' at the end of the block.")?;
-        self.end_scope();
-        Ok(())
-    }
-
     fn set_local(&mut self, name: &'src str) -> Result<(), CompileError> {
         if self.locals.len() >= 256 {
             return Err(self.new_compile_error(CompileErrorKind::TooManyLocals));
@@ -978,17 +952,19 @@ impl<'src> Compiler<'src> {
 
     // Looks for the place where the next statement should start to avoid parsing the rest of the
     // statement when the error occurs and continue from the possible healthy point.
+    // That way we do not report unnecessary errors that were most likely caused by the previous
+    // error in the statement.
     fn sync_after_error(&mut self) {
-        if self.prev_lexeme() == Some(";") {
+        if dbg!(self.prev_lexeme()) == Some(";") {
             return;
         }
 
         loop {
             let token = self.lexer.next_token();
-            #[allow(clippy::collapsible_match)]
             match &token.kind {
                 TokenKind::Eof
                 | TokenKind::Semicolon
+                | TokenKind::RightBrace
                 | TokenKind::Keyword(Keyword::Var)
                 | TokenKind::Keyword(Keyword::Fun)
                 | TokenKind::Keyword(Keyword::Class)
