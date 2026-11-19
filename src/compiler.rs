@@ -181,7 +181,7 @@ impl<'src> Compiler<'src> {
                             _ => {
                                 self.next_stmt()?;
                                 // Jump len value split by bytes
-                                let jump_len = self.chunk.code.len() - jump_code_start;
+                                let jump_len = self.chunk.code.len() - jump_code_start - 2;
                                 if jump_len > u16::MAX as usize {
                                     panic!("Can't jump that long.")
                                 }
@@ -1753,7 +1753,7 @@ var a;
         let chunk = compile(src).unwrap();
         let expected = r#"
 0000 1 OP_TRUE
-0001 | OP_JUMP_IF_FALSE 5
+0001 | OP_JUMP_IF_FALSE 3
 0004 | OP_CONSTANT [0] "condition was truthy"
 0006 | OP_PRINT
 "#

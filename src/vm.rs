@@ -72,7 +72,7 @@ impl<W: Write, E: Write> Vm<W, E> {
             self.cursor = &chunk.code[0] as *const u8;
             let last = &chunk.code[chunk.code.len() - 1] as *const u8;
 
-            while last.offset_from(self.cursor) >= 0 {
+            while dbg!(dbg!(last).offset_from(dbg!(self.cursor))) >= 0 {
                 if self.tracing {
                     print!("          [");
                     for val in &self.stack {
@@ -90,13 +90,22 @@ impl<W: Write, E: Write> Vm<W, E> {
                     .map_err(|_| RuntimeError::Other("Unknown OpCode.".to_owned()))?
                 {
                     OpCode::Constant => {
-                        self.move_cursor();
                         self.stack
-                            .push(chunk.constants[*self.cursor as usize].clone());
+                            .push(chunk.constants[*self.cursor.offset(1) as usize].clone());
+                        self.move_cursor_n(2);
                     }
-                    OpCode::True => self.stack.push(Value::Bool(true)),
-                    OpCode::False => self.stack.push(Value::Bool(false)),
-                    OpCode::Nil => self.stack.push(Value::Nil),
+                    OpCode::True => {
+                        self.stack.push(Value::Bool(true));
+                        self.move_cursor();
+                    }
+                    OpCode::False => {
+                        self.stack.push(Value::Bool(false));
+                        self.move_cursor();
+                    }
+                    OpCode::Nil => {
+                        self.stack.push(Value::Nil);
+                        self.move_cursor();
+                    }
                     OpCode::Negate => {
                         let val = match self.stack.pop() {
                             Some(v) => (-v)?,
@@ -107,6 +116,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             }
                         };
                         self.stack.push(val);
+                        self.move_cursor();
                     }
                     OpCode::Add => {
                         // NOTE: we pop values in a backwards order, so we assign the first pop to
@@ -122,6 +132,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push((v1 + v2)?);
+                        self.move_cursor();
                     }
                     OpCode::Sub => {
                         let Some(v2) = self.stack.pop() else {
@@ -135,6 +146,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push((v1 - v2)?);
+                        self.move_cursor();
                     }
                     OpCode::Mult => {
                         let Some(v2) = self.stack.pop() else {
@@ -148,6 +160,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push((v1 * v2)?);
+                        self.move_cursor();
                     }
                     OpCode::Div => {
                         let Some(v2) = self.stack.pop() else {
@@ -161,6 +174,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push((v1 / v2)?);
+                        self.move_cursor();
                     }
                     OpCode::Not => {
                         let Some(v) = self.stack.pop() else {
@@ -169,6 +183,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(!v);
+                        self.move_cursor();
                     }
                     OpCode::Equal => {
                         let Some(v2) = self.stack.pop() else {
@@ -182,6 +197,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(Value::Bool(v1 == v2));
+                        self.move_cursor();
                     }
                     OpCode::Greater => {
                         let Some(v2) = self.stack.pop() else {
@@ -195,6 +211,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(Value::Bool(v1 > v2));
+                        self.move_cursor();
                     }
                     OpCode::Less => {
                         let Some(v2) = self.stack.pop() else {
@@ -208,6 +225,7 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(Value::Bool(v1 < v2));
+                        self.move_cursor();
                     }
                     OpCode::Return => {
                         match self.stack.pop() {
@@ -216,33 +234,36 @@ impl<W: Write, E: Write> Vm<W, E> {
                         }
                         return Ok(());
                     }
-                    OpCode::Print => match self.stack.pop() {
-                        Some(v) => writeln!(self.writer, "{}", v)?,
-                        None => writeln!(self.error_writer, "Nothing on the stack.")?,
-                    },
+                    OpCode::Print => {
+                        match self.stack.pop() {
+                            Some(v) => writeln!(self.writer, "{}", v)?,
+                            None => writeln!(self.error_writer, "Nothing on the stack.")?,
+                        }
+                        self.move_cursor();
+                    }
                     OpCode::Pop => {
                         self.stack.pop();
+                        self.move_cursor();
                     }
                     OpCode::DefineGlobal => {
-                        self.move_cursor();
                         let Some(value) = self.stack.pop() else {
                             return Err(VmError::RuntimeError(RuntimeError::Other(
                                 "No value on the stack".to_owned(),
                             )));
                         };
                         let Value::Obj(Obj::String(ident)) =
-                            chunk.constants[*self.cursor as usize].clone()
+                            chunk.constants[*self.cursor.offset(1) as usize].clone()
                         else {
                             return Err(VmError::RuntimeError(RuntimeError::Other(
                                 "Unexpected identifier type".to_owned(),
                             )));
                         };
                         self.globals.insert(ident, value);
+                        self.move_cursor_n(2);
                     }
                     OpCode::GetGlobal => {
-                        self.move_cursor();
                         let Value::Obj(Obj::String(ident)) =
-                            chunk.constants[*self.cursor as usize].clone()
+                            chunk.constants[*self.cursor.offset(1) as usize].clone()
                         else {
                             return Err(VmError::RuntimeError(RuntimeError::Other(
                                 "Unexpected identifier type".to_owned(),
@@ -254,11 +275,11 @@ impl<W: Write, E: Write> Vm<W, E> {
                             )));
                         };
                         self.stack.push(value.clone());
+                        self.move_cursor_n(2)
                     }
                     OpCode::SetGlobal => {
-                        self.move_cursor();
                         let &Value::Obj(Obj::String(ref ident)) =
-                            &chunk.constants[*self.cursor as usize]
+                            &chunk.constants[*self.cursor.offset(1) as usize]
                         else {
                             return Err(VmError::RuntimeError(RuntimeError::Other(
                                 "Unexpected identifier type".to_owned(),
@@ -275,24 +296,43 @@ impl<W: Write, E: Write> Vm<W, E> {
                                 )));
                             }
                         }
+                        self.move_cursor_n(2);
                     }
                     OpCode::GetLocal => {
-                        self.move_cursor();
-                        let local = &self.stack[*self.cursor as usize];
+                        let local = &self.stack[*self.cursor.offset(1) as usize];
                         self.stack.push(local.clone());
+                        self.move_cursor_n(2);
                     }
                     OpCode::SetLocal => {
-                        self.move_cursor();
                         let Some(val) = self.stack.last() else {
                             return Err(VmError::RuntimeError(RuntimeError::StackEmpty));
                         };
-                        self.stack[*self.cursor as usize] = val.clone();
+                        self.stack[*self.cursor.offset(1) as usize] = val.clone();
+                        self.move_cursor_n(2);
                     }
                     OpCode::JumpIfFalse => {
-                        todo!("Handle OpCode::JumpIfFalse in VM");
+                        let cond = match self.stack.pop() {
+                            Some(Value::Bool(cond)) => cond,
+                            None => return Err(VmError::RuntimeError(RuntimeError::StackEmpty)),
+                            Some(other) => {
+                                return Err(VmError::RuntimeError(RuntimeError::Other(format!(
+                                    "Unexpected condition value on the stack. Expected bool, got {}",
+                                    other
+                                ))));
+                            }
+                        };
+                        if !cond {
+                            let b1 = *self.cursor.offset(1);
+                            let b2 = *self.cursor.offset(2);
+                            let jump_count = u16::from_be_bytes([b1, b2]);
+                            // `+ 2` to jump over the jump count itself
+                            self.move_cursor_n(jump_count as usize + 2);
+                        } else {
+                            // Jump over op code and jump count 2-bytes short value
+                            self.move_cursor_n(3)
+                        }
                     }
                 }
-                self.move_cursor();
             }
 
             Ok(())
@@ -305,7 +345,6 @@ impl<W: Write, E: Write> Vm<W, E> {
         }
     }
 
-    #[allow(dead_code)]
     fn move_cursor_n(&mut self, n: usize) {
         unsafe {
             self.cursor = self.cursor.add(n);
@@ -544,19 +583,35 @@ var a = 0;
         );
     }
 
-    // #[test]
-    // fn if_without_else() {
-    //     let src = r#"
-    //     if (condition) print("condition was truthy");
-    //     "#;
-    //     let mut buf: Vec<u8> = Vec::new();
-    //     let mut errbuf: Vec<u8> = Vec::new();
-    //     let mut vm = Vm::with_writers(&mut buf, &mut errbuf);
-    //     vm.tracing = true;
-    //     let _ = vm.interpret(src);
-    //     assert_eq!(
-    //         std::str::from_utf8(&errbuf).unwrap(),
-    //         "[line 3] Error at 'a': Cannot use undeclared local.\n[line 4] Error at 'a': Cannot use undeclared local.\n"
-    //     );
-    // }
+    #[test]
+    fn if_stmt_jumps_over_then_if_false() {
+        let src = r#"
+if (false) print("condition was truthy");
+print "prints no matter what";
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.tracing = true;
+        vm.interpret(src).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&buf).unwrap(),
+            "\"prints no matter what\"\n"
+        );
+    }
+
+    #[test]
+    fn if_stmt_executes_then_branch_if_true() {
+        let src = r#"
+if (true) print("condition was truthy");
+print "prints no matter what";
+"#;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut vm = Vm::with_writers(&mut buf, io::stderr());
+        vm.tracing = true;
+        vm.interpret(src).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&buf).unwrap(),
+            "\"condition was truthy\"\n\"prints no matter what\"\n"
+        );
+    }
 }
